@@ -4,6 +4,7 @@ const express = require('express');
 const cors    = require('cors');
 const { seed } = require('./database/seed');
 const { initGemini } = require('./services/aiTriage');
+const authRouter           = require('./routes/auth');
 const transactionsRouter    = require('./routes/transactions');
 const analyticsRouter       = require('./routes/analytics');
 const bulkRouter            = require('./routes/bulk');
@@ -26,6 +27,7 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use('/api/auth',         authRouter);
 app.use('/api/transactions',   transactionsRouter);
 app.use('/api/analytics',      analyticsRouter);
 app.use('/api/bulk',           bulkRouter);

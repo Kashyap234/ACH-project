@@ -381,7 +381,7 @@ export default function ReviewQueue({ onDecision }) {
                   <tr>
                     <th>Transaction ID</th><th>Company</th><th>SEC</th><th>TC</th>
                     <th>Amount</th><th>RDFI Routing</th><th>Level</th><th>Score</th>
-                    <th>Auth</th><th>Flags</th><th>Status</th><th>Date</th>
+                    <th>Auth</th><th>Flags</th><th>Status</th><th>Reviewed By</th><th>Date</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -405,6 +405,13 @@ export default function ReviewQueue({ onDecision }) {
                           {flags.length>2&&<span style={{ fontSize:'0.65rem', color:'var(--text-muted)' }}>+{flags.length-2}</span>}
                         </td>
                         <td><span className={`status-badge ${txn.status}`} style={{ fontSize:'0.65rem' }}>{txn.status?.replace('_',' ')}</span></td>
+                        <td style={{ fontSize:'0.72rem' }}>
+                          {txn.reviewer_name ? (
+                            <span className="reviewer-badge">👤 {txn.reviewer_name}</span>
+                          ) : txn.status === 'auto_approved' ? (
+                            <span style={{ fontSize:'0.68rem', color:'var(--accent-purple)' }}>🤖 AI</span>
+                          ) : '—'}
+                        </td>
                         <td style={{ fontSize:'0.72rem', color:'var(--text-muted)' }}>{new Date(txn.created_at).toLocaleDateString()}</td>
                       </tr>
                     );

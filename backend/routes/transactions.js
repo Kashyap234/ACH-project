@@ -6,6 +6,7 @@ const { queryAll, queryOne, insert, update } = require('../database/db');
 const { scoreTransaction }    = require('../services/riskEngine');
 const { generateComplianceNotes, generateReviewBrief } = require('../services/aiTriage');
 const { recordDecision, checkPatternMatch } = require('../services/learningPipeline');
+const { authenticate } = require('../middleware/auth');
 
 // ── GET /api/transactions ────────────────────────────────────────────────────
 router.get('/', (req, res) => {
@@ -188,7 +189,7 @@ router.post('/', async (req, res) => {
 });
 
 // ── POST /api/transactions/:id/decision — Rich human decision ────────────────
-router.post('/:id/decision', async (req, res) => {
+router.post('/:id/decision', authenticate, async (req, res) => {
   try {
     const { decision, ...reviewData } = req.body;
     if (!['approve', 'decline'].includes(decision)) return res.status(400).json({ success: false, error: 'decision must be approve or decline' });
@@ -197,19 +198,39 @@ router.post('/:id/decision', async (req, res) => {
     if (!txn) return res.status(404).json({ success: false, error: 'Not found' });
     if (txn.status !== 'under_review') return res.status(409).json({ success: false, error: `Already in status: ${txn.status}` });
 
+    const reviewer = req.user;
     const newStatus = decision === 'approve' ? 'approved' : 'declined';
+
     update('transactions', t => t.transaction_id === req.params.id, () => ({
       status:             newStatus,
       reviewer_decision:  decision,
       reviewer_notes:     reviewData.additional_notes || reviewData.decision_reason || null,
       return_reason_code: decision === 'decline' ? (reviewData.recommended_return_code || null) : null,
-      decision_at:        new Date().toISOString()
+      decision_at:        new Date().toISOString(),
+      // Reviewer identity
+      reviewer_id:        reviewer.user_id,
+      reviewer_name:      reviewer.full_name,
+      reviewer_username:  reviewer.username,
+      reviewer_role:      reviewer.role,
     }));
 
     const riskResult = { riskLevel: txn.risk_level, riskScore: txn.risk_score, riskFlags: txn.risk_flags || [] };
     recordDecision(txn, decision, reviewData, riskResult).catch(console.error);
 
-    res.json({ success: true, message: `Transaction ${decision.toUpperCase()}D`, data: { transaction_id: txn.transaction_id, status: newStatus, decision, return_code: reviewData.recommended_return_code || null } });
+    insert('audit_logs', {
+      transaction_id: txn.transaction_id,
+      event_type:    decision === 'approve' ? 'human_approved' : 'human_declined',
+      event_summary: `${decision === 'approve' ? '✅ Approved' : '❌ Declined'} by ${reviewer.full_name} (${reviewer.username}) — ${txn.company_name} $${txn.amount}`,
+      event_data:    {
+        decision, reviewer_id: reviewer.user_id, reviewer_name: reviewer.full_name,
+        reviewer_role: reviewer.role, return_code: reviewData.recommended_return_code || null,
+        notes: reviewData.additional_notes || null
+      },
+      actor:    reviewer.full_name,
+      severity: decision === 'approve' ? 'info' : 'warning'
+    });
+
+    res.json({ success: true, message: `Transaction ${decision.toUpperCase()}D`, data: { transaction_id: txn.transaction_id, status: newStatus, decision, reviewer_name: reviewer.full_name, return_code: reviewData.recommended_return_code || null } });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }

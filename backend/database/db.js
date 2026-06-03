@@ -16,6 +16,7 @@ let _db = {
   audit_logs:        [],
   batch_jobs:        [],  // bulk upload jobs
   return_codes:      [],  // R01-R85 lookup
+  users:             [],  // registered users
 };
 
 function loadFromDisk() {
