@@ -6,11 +6,15 @@ const EVENT_META = {
   transaction_created: { icon: '📥', color: 'var(--accent-blue)',   label: 'Created'         },
   auto_approved:       { icon: '✅', color: 'var(--accent-green)',  label: 'Auto-Approved'   },
   ai_processed:        { icon: '🤖', color: 'var(--accent-purple)', label: 'AI Processed'    },
+  human_approved:      { icon: '✅', color: 'var(--accent-green)',  label: 'Human Approved'  },
+  human_declined:      { icon: '❌', color: 'var(--accent-red)',    label: 'Human Declined'  },
   human_reviewed:      { icon: '👤', color: 'var(--accent-cyan)',   label: 'Human Review'    },
   pattern_promoted:    { icon: '🚀', color: 'var(--accent-green)',  label: 'Pattern Promoted'},
   pattern_demoted:     { icon: '⬇️', color: 'var(--accent-red)',    label: 'Pattern Demoted' },
   risk_flagged:        { icon: '⚠️', color: 'var(--accent-yellow)', label: 'Risk Flagged'    },
   rule_updated:        { icon: '📝', color: 'var(--accent-blue)',   label: 'Rule Updated'    },
+  user_registered:     { icon: '👤', color: 'var(--accent-cyan)',   label: 'User Registered' },
+  user_login:          { icon: '🔐', color: 'var(--text-muted)',    label: 'User Login'      },
 };
 
 export default function AuditLog() {
@@ -79,9 +83,19 @@ export default function AuditLog() {
                       <span style={{ fontSize:'0.72rem', fontWeight:700, color: meta.color, background: `${meta.color}15`, padding:'2px 8px', borderRadius:99 }}>
                         {meta.label}
                       </span>
-                      <span style={{ fontSize:'0.72rem', color: log.actor === 'AI' ? 'var(--accent-purple)' : 'var(--accent-cyan)' }}>
-                        {log.actor === 'AI' ? '🤖 AI System' : '👤 Human Reviewer'}
-                      </span>
+                      {/* Actor: show exact reviewer name for human decisions */}
+                      {log.actor === 'AI' || log.actor === 'SYSTEM' ? (
+                        <span style={{ fontSize:'0.72rem', color:'var(--accent-purple)' }}>🤖 AI System</span>
+                      ) : log.actor ? (
+                        <span style={{ fontSize:'0.72rem', color:'var(--accent-cyan)', display:'flex', alignItems:'center', gap:4 }}>
+                          👤 <strong style={{ color:'var(--text-primary)' }}>{log.actor}</strong>
+                          {log.event_data?.reviewer_role && (
+                            <span style={{ fontSize:'0.65rem', background:'rgba(6,182,212,0.12)', color:'var(--accent-cyan)', padding:'1px 6px', borderRadius:99, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+                              {log.event_data.reviewer_role}
+                            </span>
+                          )}
+                        </span>
+                      ) : null}
                       {log.severity === 'critical' && <span style={{ fontSize:'0.68rem', color:'var(--accent-red)', fontWeight:700 }}>⚡ CRITICAL</span>}
                       {log.severity === 'warning'  && <span style={{ fontSize:'0.68rem', color:'var(--accent-yellow)', fontWeight:700 }}>⚠ WARNING</span>}
                     </div>

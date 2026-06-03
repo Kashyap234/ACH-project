@@ -2,7 +2,15 @@
 import axios from 'axios';
 
 const API = axios.create({ baseURL: 'http://localhost:3001/api', timeout: 60000 });
-API.interceptors.request.use(c => { c.headers['Content-Type'] = 'application/json'; return c; });
+
+// Attach JWT token from localStorage to every request
+API.interceptors.request.use(c => {
+  c.headers['Content-Type'] = 'application/json';
+  const token = localStorage.getItem('ach_token');
+  if (token) c.headers['Authorization'] = `Bearer ${token}`;
+  return c;
+});
+
 API.interceptors.response.use(r => r.data, e => Promise.reject(new Error(e.response?.data?.error || e.message)));
 
 export const transactionsApi = {
@@ -50,4 +58,12 @@ export const exceptionsApi = {
 };
 
 export const healthApi = { check: () => API.get('/health') };
+
+export const authApi = {
+  login:    (data)  => API.post('/auth/login', data),
+  register: (data)  => API.post('/auth/register', data),
+  me:       ()      => API.get('/auth/me'),
+  users:    ()      => API.get('/auth/users'),
+};
+
 export default API;
