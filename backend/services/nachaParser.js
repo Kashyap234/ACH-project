@@ -202,9 +202,9 @@ function parseCsvTransactions(csvText) {
         is_positive_pay:     row.positive_pay === 'true' || row.positive_pay === '1',
         check_serial_number: row.check_number || row.check_serial_number || null,
         payee_name:          row.payee_name || null,
-        ofac_screened:       false,
-        ofac_result:         'pending',
-        aml_flag:            false,
+        ofac_screened:       row.ofac_screened === 'true' || row.ofac_screened === '1',
+        ofac_result:         row.ofac_result || 'pending',
+        aml_flag:            row.aml_flag === 'true' || row.aml_flag === '1',
         originator:          'CSV_IMPORT',
 
         // IAT fields if present
