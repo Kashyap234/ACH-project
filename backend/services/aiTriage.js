@@ -7,7 +7,7 @@ function initGemini() {
     try {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       genAI = new GoogleGenerativeAI(key);
-      geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      geminiModel = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
       console.log('✅ Gemini AI initialized (Real Mode)');
     } catch (e) { console.warn('⚠️  Gemini init failed:', e.message); }
   } else {
