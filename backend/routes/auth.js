@@ -1,4 +1,4 @@
-// backend/routes/auth.js — Register, Login, Profile endpoints
+// backend/routes/auth.js — Admin-managed user creation with email notification
 const express  = require('express');
 const router   = express.Router();
 const bcrypt   = require('bcryptjs');
@@ -17,57 +17,67 @@ function signToken(user) {
   );
 }
 
-// ── POST /api/auth/register ──────────────────────────────────────────────────
-router.post('/register', async (req, res) => {
-  try {
-    const { username, full_name, email, password, role = 'reviewer' } = req.body;
+// ── Email sender (uses nodemailer if configured, otherwise logs to console) ───
+async function sendWelcomeEmail({ to, full_name, username, password, role }) {
+  const roleLabel = { admin:'Administrator', supervisor:'Supervisor', analyst:'Analyst', reviewer:'Reviewer' }[role] || role;
+  const subject   = 'Your ACH Triage AI System Account Has Been Created';
+  const body      = [
+    'Hello ' + full_name + ',',
+    '',
+    'An administrator has created an account for you on the ACH Payment & Positive Pay AI Triage System.',
+    '',
+    'Your login credentials:',
+    '  Username : ' + username,
+    '  Password : ' + password,
+    '  Role     : ' + roleLabel,
+    '  Login URL: http://localhost:5173/login',
+    '',
+    'Please log in and change your password as soon as possible.',
+    '',
+    'This is an automated message from the ACH Triage AI System v3.0.',
+  ].join('\n');
 
-    // Validate required fields
-    if (!username || !full_name || !email || !password) {
-      return res.status(400).json({ success: false, error: 'username, full_name, email and password are required.' });
+  // Try nodemailer if SMTP is configured
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const fromAddr = process.env.SMTP_FROM || smtpUser;
+
+  if (smtpHost && smtpUser && smtpPass) {
+    try {
+      const nodemailer = require('nodemailer');
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: parseInt(process.env.SMTP_PORT || '587'),
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: { user: smtpUser, pass: smtpPass },
+      });
+      await transporter.sendMail({ from: fromAddr, to, subject, text: body });
+      console.log('[Auth] ✅ Welcome email sent to:', to);
+      return { sent: true };
+    } catch (e) {
+      console.warn('[Auth] ⚠️  Email send failed:', e.message);
+      return { sent: false, error: e.message };
     }
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters.' });
-    }
-    if (!ROLES.includes(role)) {
-      return res.status(400).json({ success: false, error: `Role must be one of: ${ROLES.join(', ')}` });
-    }
-
-    // Check uniqueness
-    const existingUsername = queryOne('users', u => u.username.toLowerCase() === username.toLowerCase());
-    if (existingUsername) return res.status(409).json({ success: false, error: 'Username already taken.' });
-
-    const existingEmail = queryOne('users', u => u.email.toLowerCase() === email.toLowerCase());
-    if (existingEmail) return res.status(409).json({ success: false, error: 'Email already registered.' });
-
-    const password_hash = await bcrypt.hash(password, 12);
-    const user_id = `USR-${uuidv4().slice(0, 8).toUpperCase()}`;
-
-    const user = insert('users', {
-      user_id, username: username.trim(), full_name: full_name.trim(),
-      email: email.trim().toLowerCase(), password_hash, role,
-      is_active: true, last_login: null
-    });
-
-    const token = signToken(user);
-    const { password_hash: _, ...safeUser } = user;
-
-    insert('audit_logs', {
-      transaction_id: null,
-      event_type:    'user_registered',
-      event_summary: `New user registered: ${full_name} (${username}) — Role: ${role}`,
-      event_data:    { user_id, role },
-      actor:         username,
-      severity:      'info'
-    });
-
-    console.log(`[Auth] ✅ Registered: ${username} (${role})`);
-    res.status(201).json({ success: true, message: 'Account created successfully.', token, user: safeUser });
-  } catch (e) {
-    console.error('[POST /auth/register]', e);
-    res.status(500).json({ success: false, error: e.message });
   }
-});
+
+  // Fallback: log credentials to console (dev mode)
+  console.log('\n╔══════════════════════════════════════════╗');
+  console.log('║  NEW USER CREDENTIALS (email not sent)   ║');
+  console.log('╠══════════════════════════════════════════╣');
+  console.log('║  To      : ' + to);
+  console.log('║  Username: ' + username);
+  console.log('║  Password: ' + password);
+  console.log('║  Role    : ' + roleLabel);
+  console.log('╚══════════════════════════════════════════╝\n');
+  return { sent: false, reason: 'SMTP not configured — credentials logged to server console' };
+}
+
+// Generate a secure random password
+function generatePassword(len = 12) {
+  const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$';
+  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
 
 // ── POST /api/auth/login ─────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
@@ -84,30 +94,27 @@ router.post('/login', async (req, res) => {
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ success: false, error: 'Invalid username or password.' });
 
-    // Update last login
     update('users', u => u.user_id === user.user_id, () => ({ last_login: new Date().toISOString() }));
 
     const token = signToken(user);
     const { password_hash: _, ...safeUser } = user;
 
     insert('audit_logs', {
-      transaction_id: null,
-      event_type:    'user_login',
-      event_summary: `User logged in: ${user.full_name} (${user.username})`,
-      event_data:    { user_id: user.user_id, role: user.role },
-      actor:         user.username,
-      severity:      'info'
+      transaction_id: null, event_type: 'user_login',
+      event_summary: 'User logged in: ' + user.full_name + ' (' + user.username + ')',
+      event_data: { user_id: user.user_id, role: user.role },
+      actor: user.username, severity: 'info'
     });
 
-    console.log(`[Auth] ✅ Login: ${user.username} (${user.role})`);
-    res.json({ success: true, message: `Welcome back, ${user.full_name}!`, token, user: safeUser });
+    console.log('[Auth] ✅ Login: ' + user.username + ' (' + user.role + ')');
+    res.json({ success: true, message: 'Welcome back, ' + user.full_name + '!', token, user: safeUser });
   } catch (e) {
     console.error('[POST /auth/login]', e);
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// ── GET /api/auth/me ─────────────────────────────────────────────────────────
+// ── GET /api/auth/me ──────────────────────────────────────────────────────────
 router.get('/me', authenticate, (req, res) => {
   try {
     const user = queryOne('users', u => u.user_id === req.user.user_id);
@@ -119,7 +126,74 @@ router.get('/me', authenticate, (req, res) => {
   }
 });
 
-// ── GET /api/auth/users — Admin: list all users ──────────────────────────────
+// ── POST /api/auth/create-user — Admin only: create user + send email ─────────
+router.post('/create-user', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Admin access required to create users.' });
+    }
+
+    const { username, full_name, email, role, custom_password } = req.body;
+
+    if (!username || !full_name || !email || !role) {
+      return res.status(400).json({ success: false, error: 'username, full_name, email, and role are required.' });
+    }
+    if (!ROLES.includes(role)) {
+      return res.status(400).json({ success: false, error: 'Role must be one of: ' + ROLES.join(', ') });
+    }
+    if (!/\S+@\S+\.\S+/.test(email)) {
+      return res.status(400).json({ success: false, error: 'Invalid email address.' });
+    }
+
+    // Check uniqueness
+    if (queryOne('users', u => u.username.toLowerCase() === username.toLowerCase())) {
+      return res.status(409).json({ success: false, error: 'Username "' + username + '" is already taken.' });
+    }
+    if (queryOne('users', u => u.email.toLowerCase() === email.toLowerCase())) {
+      return res.status(409).json({ success: false, error: 'Email "' + email + '" is already registered.' });
+    }
+
+    const plainPassword = custom_password || generatePassword();
+    const password_hash = await bcrypt.hash(plainPassword, 12);
+    const user_id = 'USR-' + uuidv4().slice(0, 8).toUpperCase();
+
+    const user = insert('users', {
+      user_id, username: username.trim(), full_name: full_name.trim(),
+      email: email.trim().toLowerCase(), password_hash, role,
+      is_active: true, last_login: null,
+      created_by: req.user.username,
+    });
+
+    // Send welcome email (or log to console)
+    const emailResult = await sendWelcomeEmail({
+      to: email, full_name, username: username.trim(), password: plainPassword, role
+    });
+
+    insert('audit_logs', {
+      transaction_id: null, event_type: 'user_created',
+      event_summary: 'User created by admin ' + req.user.username + ': ' + full_name + ' (' + username + ') — Role: ' + role,
+      event_data: { user_id, role, created_by: req.user.username, email_sent: emailResult.sent },
+      actor: req.user.username, severity: 'info'
+    });
+
+    const { password_hash: _, ...safeUser } = user;
+    console.log('[Auth] ✅ User created by admin: ' + username + ' (' + role + ')');
+
+    res.status(201).json({
+      success: true,
+      message: 'User "' + username + '" created successfully. ' + (emailResult.sent ? 'Credentials sent to ' + email + '.' : 'Credentials logged to server console (SMTP not configured).'),
+      user: safeUser,
+      email_status: emailResult,
+      // Return plain password only in response (so admin can share manually if SMTP not set)
+      temp_password: plainPassword,
+    });
+  } catch (e) {
+    console.error('[POST /auth/create-user]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── GET /api/auth/users — Admin: list all users ───────────────────────────────
 router.get('/users', authenticate, (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -127,7 +201,125 @@ router.get('/users', authenticate, (req, res) => {
     }
     const users = queryAll('users', null, { orderBy: 'created_at', desc: true });
     const safe  = users.map(({ password_hash, ...u }) => u);
-    res.json({ success: true, data: safe });
+    res.json({ success: true, data: safe, total: safe.length });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── PATCH /api/auth/users/:user_id — Admin: update user role / active status ──
+router.patch('/users/:user_id', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Admin access required.' });
+    }
+
+    const { user_id } = req.params;
+    const existing = queryOne('users', u => u.user_id === user_id);
+    if (!existing) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    // Prevent admin from deactivating themselves
+    if (user_id === req.user.user_id && req.body.is_active === false) {
+      return res.status(400).json({ success: false, error: 'You cannot deactivate your own account.' });
+    }
+
+    const allowed = {};
+    if (req.body.role       !== undefined && ROLES.includes(req.body.role)) allowed.role       = req.body.role;
+    if (req.body.is_active  !== undefined) allowed.is_active  = Boolean(req.body.is_active);
+    if (req.body.full_name  !== undefined) allowed.full_name  = req.body.full_name;
+
+    // Reset password
+    if (req.body.reset_password) {
+      const newPass = generatePassword();
+      allowed.password_hash = await bcrypt.hash(newPass, 12);
+      // Send new password email
+      await sendWelcomeEmail({ to: existing.email, full_name: existing.full_name, username: existing.username, password: newPass, role: allowed.role || existing.role });
+      allowed._temp_password = newPass; // temporary, removed before save
+    }
+
+    const tempPass = allowed._temp_password;
+    delete allowed._temp_password;
+
+    update('users', u => u.user_id === user_id, () => allowed);
+
+    insert('audit_logs', {
+      transaction_id: null, event_type: 'user_updated',
+      event_summary: 'User updated by ' + req.user.username + ': ' + existing.username + ' — Changed: ' + Object.keys(allowed).join(', '),
+      event_data: { user_id, changes: allowed, by: req.user.username },
+      actor: req.user.username, severity: 'warning'
+    });
+
+    const updated = queryOne('users', u => u.user_id === user_id);
+    const { password_hash: _, ...safeUser } = updated;
+
+    res.json({
+      success: true,
+      message: 'User "' + existing.username + '" updated successfully.',
+      user: safeUser,
+      ...(tempPass ? { temp_password: tempPass, note: 'New password sent to ' + existing.email } : {})
+    });
+  } catch (e) {
+    console.error('[PATCH /auth/users/:id]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── DELETE /api/auth/users/:user_id — Admin: permanently delete user ──────────
+router.delete('/users/:user_id', authenticate, (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Admin access required.' });
+    }
+
+    const { user_id } = req.params;
+    if (user_id === req.user.user_id) {
+      return res.status(400).json({ success: false, error: 'You cannot delete your own account.' });
+    }
+
+    const existing = queryOne('users', u => u.user_id === user_id);
+    if (!existing) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const { remove } = require('../database/db');
+    remove('users', u => u.user_id === user_id);
+
+    insert('audit_logs', {
+      transaction_id: null, event_type: 'user_deleted',
+      event_summary: 'User DELETED by ' + req.user.username + ': ' + existing.full_name + ' (' + existing.username + ')',
+      event_data: { user_id, deleted_username: existing.username, role: existing.role },
+      actor: req.user.username, severity: 'critical'
+    });
+
+    res.json({ success: true, message: 'User "' + existing.username + '" has been permanently deleted.' });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── POST /api/auth/change-password — Any user: change own password ─────────────
+router.post('/change-password', authenticate, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password) {
+      return res.status(400).json({ success: false, error: 'current_password and new_password are required.' });
+    }
+    if (new_password.length < 6) {
+      return res.status(400).json({ success: false, error: 'New password must be at least 6 characters.' });
+    }
+
+    const user = queryOne('users', u => u.user_id === req.user.user_id);
+    const valid = await bcrypt.compare(current_password, user.password_hash);
+    if (!valid) return res.status(401).json({ success: false, error: 'Current password is incorrect.' });
+
+    const password_hash = await bcrypt.hash(new_password, 12);
+    update('users', u => u.user_id === req.user.user_id, () => ({ password_hash }));
+
+    insert('audit_logs', {
+      transaction_id: null, event_type: 'password_changed',
+      event_summary: 'Password changed by ' + user.username,
+      event_data: { user_id: user.user_id }, actor: user.username, severity: 'info'
+    });
+
+    res.json({ success: true, message: 'Password changed successfully.' });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }

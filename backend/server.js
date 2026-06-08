@@ -11,6 +11,7 @@ const bulkRouter            = require('./routes/bulk');
 const accountsRouter        = require('./routes/accounts');
 const positivePayRouter     = require('./routes/positivePayRegister');
 const exceptionsRouter      = require('./routes/exceptions');
+const chatbotRouter         = require('./routes/chatbot');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -34,6 +35,7 @@ app.use('/api/bulk',           bulkRouter);
 app.use('/api/accounts',       accountsRouter);
 app.use('/api/check-register', positivePayRouter);
 app.use('/api/exceptions',     exceptionsRouter);
+app.use('/api/chatbot',        chatbotRouter);
 
 app.get('/api/health', (req, res) => res.json({
   status: 'ok', service: 'ACH AI Triage System v3.0', version: '3.0.0',

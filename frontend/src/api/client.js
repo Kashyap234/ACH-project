@@ -59,11 +59,23 @@ export const exceptionsApi = {
 
 export const healthApi = { check: () => API.get('/health') };
 
+export const chatbotApi = {
+  sendMessage: (message, history = []) => API.post('/chatbot/message', { message, history }),
+  getContext:  ()                        => API.get('/chatbot/context'),
+  crud:        (operation, transaction_id, data = {}) => API.post('/chatbot/crud', { operation, transaction_id, data }),
+  decision:    (transaction_id, action, notes = '')   => API.post('/chatbot/decision', { transaction_id, action, notes }),
+};
+
 export const authApi = {
-  login:    (data)  => API.post('/auth/login', data),
-  register: (data)  => API.post('/auth/register', data),
-  me:       ()      => API.get('/auth/me'),
-  users:    ()      => API.get('/auth/users'),
+  login:          (data)       => API.post('/auth/login', data),
+  me:             ()           => API.get('/auth/me'),
+  // Admin-only
+  createUser:     (data)       => API.post('/auth/create-user', data),
+  listUsers:      ()           => API.get('/auth/users'),
+  updateUser:     (id, data)   => API.patch('/auth/users/' + id, data),
+  deleteUser:     (id)         => API.delete('/auth/users/' + id),
+  // Any authenticated user
+  changePassword: (data)       => API.post('/auth/change-password', data),
 };
 
 export default API;

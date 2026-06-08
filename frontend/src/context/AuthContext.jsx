@@ -3,7 +3,6 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import axios from 'axios';
 
 const AuthContext = createContext(null);
-
 const API_BASE = 'http://localhost:3001/api';
 
 export function AuthProvider({ children }) {
@@ -32,15 +31,6 @@ export function AuthProvider({ children }) {
     return u;
   }, []);
 
-  const register = useCallback(async (data) => {
-    const r = await axios.post(`${API_BASE}/auth/register`, data);
-    const { token: t, user: u } = r.data;
-    localStorage.setItem('ach_token', t);
-    setToken(t);
-    setUser(u);
-    return u;
-  }, []);
-
   const logout = useCallback(() => {
     localStorage.removeItem('ach_token');
     setToken(null);
@@ -48,7 +38,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout, register }}>
+    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

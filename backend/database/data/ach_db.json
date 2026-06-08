@@ -1103,7 +1103,7 @@
     {
       "id": 15,
       "created_at": "2026-06-07T13:22:46.412Z",
-      "updated_at": "2026-06-07T13:22:46.412Z",
+      "updated_at": "2026-06-08T06:58:56.493Z",
       "transaction_id": "TXN-0B671CD6",
       "sec_code": "TEL",
       "company_name": "Amazon Marketplace",
@@ -1185,7 +1185,14 @@
       "compliance_notes": null,
       "ai_recommendation": "decline",
       "ai_confidence": 95,
-      "status": "under_review"
+      "status": "approved",
+      "reviewer_decision": "approve",
+      "reviewer_notes": "Decision made via AI Chatbot",
+      "decision_at": "2026-06-08T06:58:56.493Z",
+      "reviewer_id": "USR-FD1130AD",
+      "reviewer_name": "kashyap",
+      "reviewer_username": "kash234",
+      "reviewer_role": "admin"
     }
   ],
   "risk_rules": [
@@ -1664,9 +1671,201 @@
       "trigger_count": 0
     }
   ],
-  "human_decisions": [],
-  "review_decisions": [],
-  "learning_patterns": [],
+  "human_decisions": [
+    {
+      "id": 1,
+      "created_at": "2026-06-08T06:58:56.494Z",
+      "updated_at": "2026-06-08T06:58:56.494Z",
+      "transaction_id": "TXN-0B671CD6",
+      "reviewer_id": "reviewer_01",
+      "reviewer_name": "Risk Analyst",
+      "decision": "approve",
+      "decision_reason": null,
+      "risk_level_at_decision": 3,
+      "risk_score_at_decision": 100,
+      "risk_flags_at_decision": [
+        {
+          "rule_code": "AMT_003",
+          "rule_name": "Round Dollar Amount",
+          "category": "amount",
+          "description": "Exact round $100 multiples are a known fraud structuring indicator.",
+          "flag_level": 2,
+          "weight": 1,
+          "severity": "warning"
+        },
+        {
+          "rule_code": "SEC_002",
+          "rule_name": "TEL Entry — Phone Initiated",
+          "category": "compliance",
+          "description": "TEL requires recorded verbal auth or written notice before debit.",
+          "flag_level": 2,
+          "weight": 1.2,
+          "severity": "warning"
+        },
+        {
+          "rule_code": "OFC_001",
+          "rule_name": "OFAC Screening Required",
+          "category": "sanctions",
+          "description": "IAT or high-value transaction requires OFAC SDN list screening before processing.",
+          "flag_level": 3,
+          "weight": 3,
+          "severity": "critical"
+        }
+      ],
+      "ai_recommendation_at_decision": "decline",
+      "ai_confidence_at_decision": 95
+    }
+  ],
+  "review_decisions": [
+    {
+      "id": 1,
+      "created_at": "2026-06-08T06:58:56.494Z",
+      "updated_at": "2026-06-08T06:58:56.494Z",
+      "transaction_id": "TXN-0B671CD6",
+      "decision": "approve",
+      "decision_reason": null,
+      "reviewer_confidence": "MEDIUM",
+      "confidence_weight": 0.7,
+      "time_to_decide_seconds": null,
+      "risk_level_at_decision": 3,
+      "risk_score_at_decision": 100,
+      "risk_flags_at_decision": [
+        {
+          "rule_code": "AMT_003",
+          "rule_name": "Round Dollar Amount",
+          "category": "amount",
+          "description": "Exact round $100 multiples are a known fraud structuring indicator.",
+          "flag_level": 2,
+          "weight": 1,
+          "severity": "warning"
+        },
+        {
+          "rule_code": "SEC_002",
+          "rule_name": "TEL Entry — Phone Initiated",
+          "category": "compliance",
+          "description": "TEL requires recorded verbal auth or written notice before debit.",
+          "flag_level": 2,
+          "weight": 1.2,
+          "severity": "warning"
+        },
+        {
+          "rule_code": "OFC_001",
+          "rule_name": "OFAC Screening Required",
+          "category": "sanctions",
+          "description": "IAT or high-value transaction requires OFAC SDN list screening before processing.",
+          "flag_level": 3,
+          "weight": 3,
+          "severity": "critical"
+        }
+      ],
+      "ai_recommendation": "decline",
+      "ai_confidence": 95,
+      "identity_verified": false,
+      "identity_verification_method": null,
+      "counterparty_type": null,
+      "account_ownership_confirmed": false,
+      "fraud_indicators": [],
+      "risk_override_reason": null,
+      "escalation_level": "none",
+      "escalation_reason": null,
+      "business_purpose": null,
+      "authorization_reviewed": false,
+      "authorization_type_confirmed": null,
+      "customer_contacted": false,
+      "customer_contact_outcome": null,
+      "recommended_return_code": null,
+      "return_code_reason": null,
+      "additional_notes": "Via chatbot"
+    }
+  ],
+  "learning_patterns": [
+    {
+      "id": 1,
+      "created_at": "2026-06-08T06:58:56.495Z",
+      "updated_at": "2026-06-08T06:58:56.495Z",
+      "pattern_hash": "9556b56f0ca8c48f",
+      "pattern_description": "TEL DEBIT [medium] via checking | Round Dollar Amount | TEL Entry — Phone Initiated | OFAC Screening Required",
+      "feature_vector": {
+        "sec_code": "TEL",
+        "transaction_code": "27",
+        "transaction_type": "debit",
+        "amount_bucket": "medium",
+        "account_type": "checking",
+        "is_prenote": false,
+        "flag_codes": [
+          "AMT_003",
+          "OFC_001",
+          "SEC_002"
+        ],
+        "flag_count": 3,
+        "max_flag_level": 3,
+        "has_ofac_flag": true,
+        "has_aml_flag": false,
+        "has_addenda": false,
+        "authorization_type": "TEL_VERBAL",
+        "ofac_screened": false,
+        "identity_verified": false,
+        "identity_method": null,
+        "counterparty_type": "UNKNOWN",
+        "fraud_indicators_present": false,
+        "fraud_indicators": [],
+        "business_purpose": null,
+        "authorization_confirmed": false,
+        "customer_contacted": false,
+        "customer_outcome": null,
+        "escalation_level": "none"
+      },
+      "last_feature_vector": {
+        "sec_code": "TEL",
+        "transaction_code": "27",
+        "transaction_type": "debit",
+        "amount_bucket": "medium",
+        "account_type": "checking",
+        "is_prenote": false,
+        "flag_codes": [
+          "AMT_003",
+          "OFC_001",
+          "SEC_002"
+        ],
+        "flag_count": 3,
+        "max_flag_level": 3,
+        "has_ofac_flag": true,
+        "has_aml_flag": false,
+        "has_addenda": false,
+        "authorization_type": "TEL_VERBAL",
+        "ofac_screened": false,
+        "identity_verified": false,
+        "identity_method": null,
+        "counterparty_type": "UNKNOWN",
+        "fraud_indicators_present": false,
+        "fraud_indicators": [],
+        "business_purpose": null,
+        "authorization_confirmed": false,
+        "customer_contacted": false,
+        "customer_outcome": null,
+        "escalation_level": "none"
+      },
+      "sec_codes": [
+        "TEL"
+      ],
+      "amount_range_min": 3250,
+      "amount_range_max": 13000,
+      "total_decisions": 1,
+      "approve_count": 1,
+      "decline_count": 0,
+      "approve_weight": 0.7,
+      "decline_weight": 0,
+      "confidence_score": 0.9985734664764622,
+      "promoted_to_level1": false,
+      "is_frozen": false,
+      "demotion_count": 0,
+      "min_decisions_required": 5,
+      "confidence_threshold": 0.85,
+      "fraud_indicator_counts": {},
+      "most_common_purpose": null,
+      "avg_time_to_decide": 0
+    }
+  ],
   "audit_logs": [
     {
       "id": 1,
@@ -1905,6 +2104,80 @@
         "risk_score": 100
       },
       "actor": "AI",
+      "severity": "info"
+    },
+    {
+      "id": 17,
+      "created_at": "2026-06-07T14:44:29.335Z",
+      "updated_at": "2026-06-07T14:44:29.335Z",
+      "transaction_id": null,
+      "event_type": "user_login",
+      "event_summary": "User logged in: kashyap (kash234)",
+      "event_data": {
+        "user_id": "USR-FD1130AD",
+        "role": "admin"
+      },
+      "actor": "kash234",
+      "severity": "info"
+    },
+    {
+      "id": 18,
+      "created_at": "2026-06-08T05:27:51.075Z",
+      "updated_at": "2026-06-08T05:27:51.075Z",
+      "transaction_id": null,
+      "event_type": "user_login",
+      "event_summary": "User logged in: kashyap (kash234)",
+      "event_data": {
+        "user_id": "USR-FD1130AD",
+        "role": "admin"
+      },
+      "actor": "kash234",
+      "severity": "info"
+    },
+    {
+      "id": 19,
+      "created_at": "2026-06-08T06:58:56.495Z",
+      "updated_at": "2026-06-08T06:58:56.495Z",
+      "transaction_id": "TXN-0B671CD6",
+      "event_type": "human_reviewed",
+      "event_summary": "Human APPROVED · Confidence: MEDIUM · No purpose stated",
+      "event_data": {
+        "decision": "approve",
+        "risk_level": 3
+      },
+      "actor": "HUMAN",
+      "actor_id": "reviewer_01",
+      "severity": "info"
+    },
+    {
+      "id": 20,
+      "created_at": "2026-06-08T06:58:56.496Z",
+      "updated_at": "2026-06-08T06:58:56.496Z",
+      "transaction_id": "TXN-0B671CD6",
+      "event_type": "human_approved",
+      "event_summary": "Approved via chatbot by kashyap (kash234) — Amazon Marketplace $6500",
+      "event_data": {
+        "decision": "approve",
+        "via": "chatbot",
+        "reviewer": "kash234"
+      },
+      "actor": "kashyap",
+      "severity": "info"
+    },
+    {
+      "id": 21,
+      "created_at": "2026-06-08T08:51:29.198Z",
+      "updated_at": "2026-06-08T08:51:29.198Z",
+      "transaction_id": null,
+      "event_type": "user_created",
+      "event_summary": "User created by admin kash234: john (john123) — Role: analyst",
+      "event_data": {
+        "user_id": "USR-570408FF",
+        "role": "analyst",
+        "created_by": "kash234",
+        "email_sent": true
+      },
+      "actor": "kash234",
       "severity": "info"
     }
   ],
@@ -2286,7 +2559,7 @@
     {
       "id": 1,
       "created_at": "2026-06-07T13:15:54.692Z",
-      "updated_at": "2026-06-07T13:15:54.692Z",
+      "updated_at": "2026-06-08T05:27:51.072Z",
       "user_id": "USR-FD1130AD",
       "username": "kash234",
       "full_name": "kashyap",
@@ -2294,8 +2567,90 @@
       "password_hash": "$2b$12$JuJUfKP84wR69pyTKhV3huav5j5M0/ls4paQny9Bj6moWG1zPrBMK",
       "role": "admin",
       "is_active": true,
-      "last_login": null
+      "last_login": "2026-06-08T05:27:51.072Z"
+    },
+    {
+      "id": 2,
+      "created_at": "2026-06-08T08:51:03.467Z",
+      "updated_at": "2026-06-08T08:51:03.467Z",
+      "user_id": "USR-570408FF",
+      "username": "john123",
+      "full_name": "john",
+      "email": "21dce006@charusat.edu.in",
+      "password_hash": "$2b$12$HHZu3Kf0pd1Ko/E8YQKbtuyLS7GmKmcs4KNaI.C6X3LLNYZVJlLl.",
+      "role": "analyst",
+      "is_active": true,
+      "last_login": null,
+      "created_by": "kash234"
     }
   ],
-  "accounts": []
+  "accounts": [
+    {
+      "id": 1,
+      "created_at": "2026-06-08T08:41:41.518Z",
+      "updated_at": "2026-06-08T08:41:41.518Z",
+      "account_id": "ACC-001",
+      "account_name": "Operating Checking Account",
+      "account_number": "****1234",
+      "filter_mode": "positive_pay",
+      "debit_block": false,
+      "reverse_positive_pay": false,
+      "cutoff_time": "14:00",
+      "default_action": "return",
+      "max_daily_debit": 100000,
+      "authorized_company_ids": [],
+      "is_active": true
+    },
+    {
+      "id": 2,
+      "created_at": "2026-06-08T08:41:41.518Z",
+      "updated_at": "2026-06-08T08:41:41.518Z",
+      "account_id": "ACC-002",
+      "account_name": "Payroll Account",
+      "account_number": "****5678",
+      "filter_mode": "allow_list",
+      "debit_block": false,
+      "reverse_positive_pay": false,
+      "cutoff_time": "14:00",
+      "default_action": "return",
+      "max_daily_debit": 500000,
+      "authorized_company_ids": [
+        "ACMECORP01",
+        "PAYROLL0001"
+      ],
+      "is_active": true
+    },
+    {
+      "id": 3,
+      "created_at": "2026-06-08T08:41:41.518Z",
+      "updated_at": "2026-06-08T08:41:41.518Z",
+      "account_id": "ACC-003",
+      "account_name": "Tax Reserve Account",
+      "account_number": "****9012",
+      "filter_mode": "block_all",
+      "debit_block": true,
+      "reverse_positive_pay": false,
+      "cutoff_time": "12:00",
+      "default_action": "return",
+      "max_daily_debit": 0,
+      "authorized_company_ids": [],
+      "is_active": true
+    },
+    {
+      "id": 4,
+      "created_at": "2026-06-08T08:41:41.519Z",
+      "updated_at": "2026-06-08T08:41:41.519Z",
+      "account_id": "ACC-004",
+      "account_name": "Vendor Payments Account",
+      "account_number": "****3456",
+      "filter_mode": "reverse_positive_pay",
+      "debit_block": false,
+      "reverse_positive_pay": true,
+      "cutoff_time": "13:00",
+      "default_action": "pay",
+      "max_daily_debit": 250000,
+      "authorized_company_ids": [],
+      "is_active": true
+    }
+  ]
 }

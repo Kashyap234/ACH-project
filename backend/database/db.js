@@ -85,4 +85,14 @@ function count(table, filterFn = null) {
   return filterFn ? rows.filter(filterFn).length : rows.length;
 }
 
-module.exports = { queryAll, queryOne, insert, update, count, getTable, saveToDisk };
+function remove(table, filterFn) {
+  const rows = getTable(table);
+  const before = rows.length;
+  const filtered = rows.filter(r => !filterFn(r));
+  _db[table] = filtered;
+  if (filtered.length !== before) saveToDisk();
+  return before - filtered.length; // number of removed rows
+}
+
+module.exports = { queryAll, queryOne, insert, update, remove, count, getTable, saveToDisk };
+

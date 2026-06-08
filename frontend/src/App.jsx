@@ -11,8 +11,9 @@ import AuditLog           from './pages/AuditLog';
 import ExceptionDashboard from './pages/ExceptionDashboard';
 import AccountManager     from './pages/AccountManager';
 import IssuedCheckRegister from './pages/IssuedCheckRegister';
+import UserManagement     from './pages/UserManagement';
 import LoginPage          from './pages/LoginPage';
-import RegisterPage       from './pages/RegisterPage';
+import Chatbot            from './components/Chatbot';
 import { analyticsApi, exceptionsApi } from './api/client';
 import './index.css';
 
@@ -26,19 +27,25 @@ const ROLE_COLORS = {
 
 function Sidebar({ pendingCount, exceptionCount }) {
   const { user, logout } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   const nav = [
-    { to:'/',          icon:'🏠', label:'Dashboard'         },
-    { to:'/intake',    icon:'➕', label:'Add Transaction'    },
-    { to:'/bulk',      icon:'📦', label:'Bulk Upload'        },
-    { to:'/queue',     icon:'⚠️',  label:'Review Queue',      badge: pendingCount },
+    { to:'/',           icon:'🏠', label:'Dashboard'          },
+    { to:'/intake',     icon:'➕', label:'Add Transaction'     },
+    { to:'/bulk',       icon:'📦', label:'Bulk Upload'         },
+    { to:'/queue',      icon:'⚠️',  label:'Review Queue',       badge: pendingCount },
     { section: '── Positive Pay ──' },
-    { to:'/exceptions',icon:'⚡', label:'Exception Dashboard', badge: exceptionCount, badgeColor:'var(--accent-red)' },
-    { to:'/accounts',  icon:'🏦', label:'Account ACH Filters' },
-    { to:'/register',  icon:'✅', label:'Check Register'    },
+    { to:'/exceptions', icon:'⚡', label:'Exception Dashboard', badge: exceptionCount, badgeColor:'var(--accent-red)' },
+    { to:'/accounts',   icon:'🏦', label:'Account ACH Filters' },
+    { to:'/register',   icon:'✅', label:'Check Register'     },
     { section: '── Reports ──' },
-    { to:'/analytics', icon:'📊', label:'Analytics'          },
-    { to:'/audit',     icon:'📋', label:'Audit Log'           },
+    { to:'/analytics',  icon:'📊', label:'Analytics'           },
+    { to:'/audit',      icon:'📋', label:'Audit Log'            },
+    // Admin-only section
+    ...(isAdmin ? [
+      { section: '── Administration ──' },
+      { to:'/users',    icon:'👥', label:'User Management'     },
+    ] : []),
   ];
 
   return (
@@ -95,7 +102,7 @@ function Sidebar({ pendingCount, exceptionCount }) {
 }
 
 // ── Protected Route wrapper ───────────────────────────────────────────────────
-function ProtectedRoute({ children }) {
+function ProtectedRoute({ children, adminOnly = false }) {
   const { user, loading } = useAuth();
   if (loading) {
     return (
@@ -106,6 +113,7 @@ function ProtectedRoute({ children }) {
     );
   }
   if (!user) return <Navigate to="/login" replace />;
+  if (adminOnly && user.role !== 'admin') return <Navigate to="/" replace />;
   return children;
 }
 
@@ -125,17 +133,20 @@ function AppShell() {
       <Sidebar pendingCount={pending} exceptionCount={exceptions} />
       <main className="main-content">
         <Routes>
-          <Route path="/"          element={<Dashboard />} />
-          <Route path="/intake"    element={<TransactionIntake onSubmit={refresh} />} />
-          <Route path="/bulk"      element={<BulkUpload onComplete={refresh} />} />
-          <Route path="/queue"     element={<ReviewQueue onDecision={refresh} />} />
-          <Route path="/exceptions"element={<ExceptionDashboard onDecision={refresh} />} />
-          <Route path="/accounts"  element={<AccountManager />} />
-          <Route path="/register"  element={<IssuedCheckRegister />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/audit"     element={<AuditLog />} />
+          <Route path="/"           element={<Dashboard />} />
+          <Route path="/intake"     element={<TransactionIntake onSubmit={refresh} />} />
+          <Route path="/bulk"       element={<BulkUpload onComplete={refresh} />} />
+          <Route path="/queue"      element={<ReviewQueue onDecision={refresh} />} />
+          <Route path="/exceptions" element={<ExceptionDashboard onDecision={refresh} />} />
+          <Route path="/accounts"   element={<AccountManager />} />
+          <Route path="/register"   element={<IssuedCheckRegister />} />
+          <Route path="/analytics"  element={<Analytics />} />
+          <Route path="/audit"      element={<AuditLog />} />
+          {/* Admin-only */}
+          <Route path="/users"      element={<ProtectedRoute adminOnly><UserManagement /></ProtectedRoute>} />
         </Routes>
       </main>
+      <Chatbot />
     </div>
   );
 }
@@ -145,9 +156,8 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          {/* Public routes */}
-          <Route path="/login"    element={<PublicRoute><LoginPage /></PublicRoute>} />
-          <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
+          {/* Public routes — only login */}
+          <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
           {/* All other routes are protected */}
           <Route path="/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
         </Routes>
@@ -156,7 +166,7 @@ export default function App() {
   );
 }
 
-// Redirect logged-in users away from login/register
+// Redirect logged-in users away from login
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return null;

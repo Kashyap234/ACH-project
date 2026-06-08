@@ -1,6 +1,6 @@
 // frontend/src/pages/LoginPage.jsx
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function LoginPage() {
@@ -43,7 +43,7 @@ export default function LoginPage() {
         <div className="auth-divider" />
 
         <h2 className="auth-title">Welcome Back</h2>
-        <p className="auth-subtitle">Sign in to your reviewer account</p>
+        <p className="auth-subtitle">Contact your administrator to request an account</p>
 
         <form onSubmit={handleSubmit} className="auth-form" id="login-form">
           <div className="form-group">
@@ -91,9 +91,8 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div className="auth-footer">
-          Don't have an account?{' '}
-          <Link to="/register" className="auth-link">Create account</Link>
+        <div className="auth-footer" style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+          🔒 Account access is managed by your system administrator
         </div>
       </div>
     </div>
