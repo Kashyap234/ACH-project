@@ -1,29 +1,26 @@
 // backend/routes/exceptions.js
-// Exception Dashboard — items requiring pay/return decision before cutoff deadline
+// Exception Dashboard — items requiring pay/return decision before cutoff deadline (Firestore async)
 const express = require('express');
 const router  = express.Router();
 const { queryAll, queryOne, insert, update } = require('../database/db');
 
 // ── Build exceptions from under_review transactions ──────────────────────────
-function buildExceptions(accountId) {
-  const accounts   = queryAll('accounts');
-  const allTxns    = queryAll('transactions', t => t.status === 'under_review', { orderBy:'created_at', desc:true });
+async function buildExceptions(accountId) {
+  const accounts = await queryAll('accounts');
+  const allTxns  = await queryAll('transactions', t => t.status === 'under_review', { orderBy:'created_at', desc:true });
   const exceptions = [];
 
   for (const txn of allTxns) {
-    // Determine which account this belongs to
     const acct = accountId
-      ? queryOne('accounts', a => a.account_id === accountId)
-      : accounts[0]; // default to first account for demo
+      ? await queryOne('accounts', a => a.account_id === accountId)
+      : accounts[0];
 
     if (!acct) continue;
 
-    // Build exception record
     const createdAt  = new Date(txn.created_at);
     const [hh, mm]   = (acct.cutoff_time || '14:00').split(':').map(Number);
     const cutoff     = new Date(createdAt);
     cutoff.setHours(hh, mm, 0, 0);
-    // If created after cutoff, deadline is next day
     if (createdAt > cutoff) cutoff.setDate(cutoff.getDate() + 1);
 
     const now       = new Date();
@@ -58,12 +55,12 @@ function buildExceptions(accountId) {
 }
 
 // GET /api/exceptions — all pending exceptions with countdown
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { account_id } = req.query;
-    const exceptions = buildExceptions(account_id || null);
+    const exceptions = await buildExceptions(account_id || null);
     const pastDue    = exceptions.filter(e => e.is_past_due).length;
-    const urgent     = exceptions.filter(e => !e.is_past_due && e.ms_remaining < 3600000).length; // < 1 hour
+    const urgent     = exceptions.filter(e => !e.is_past_due && e.ms_remaining < 3600000).length;
 
     res.json({
       success: true,
@@ -71,7 +68,7 @@ router.get('/', (req, res) => {
       summary: {
         total:    exceptions.length,
         past_due: pastDue,
-        urgent:   urgent,       // < 1 hour remaining
+        urgent,
         safe:     exceptions.length - pastDue - urgent,
       }
     });
@@ -79,21 +76,21 @@ router.get('/', (req, res) => {
 });
 
 // POST /api/exceptions/:txn_id/decide — pay or return with deadline check
-router.post('/:txn_id/decide', (req, res) => {
+router.post('/:txn_id/decide', async (req, res) => {
   try {
     const { decision, reason } = req.body;
     if (!['pay','return'].includes(decision)) return res.status(400).json({ success:false, error:'decision must be pay or return' });
 
-    const txn = queryOne('transactions', t => t.transaction_id === req.params.txn_id);
+    const txn = await queryOne('transactions', t => t.transaction_id === req.params.txn_id);
     if (!txn) return res.status(404).json({ success:false, error:'Transaction not found' });
 
     const newStatus = decision === 'pay' ? 'approved' : 'declined';
-    update('transactions', t => t.transaction_id === req.params.txn_id, () => ({
+    await update('transactions', t => t.transaction_id === req.params.txn_id, () => ({
       status: newStatus, reviewer_decision: decision === 'pay' ? 'approve' : 'decline',
       reviewer_notes: reason || `Exception ${decision} decision`, decision_at: new Date().toISOString()
     }));
 
-    insert('audit_logs', {
+    await insert('audit_logs', {
       transaction_id: req.params.txn_id,
       event_type:    'human_reviewed',
       event_summary: `Exception ${decision.toUpperCase()} decision made${reason ? ': ' + reason : ''}`,
@@ -106,19 +103,19 @@ router.post('/:txn_id/decide', (req, res) => {
 });
 
 // POST /api/exceptions/apply-defaults — trigger default action for all past-due items
-router.post('/apply-defaults', (req, res) => {
+router.post('/apply-defaults', async (req, res) => {
   try {
-    const exceptions = buildExceptions(null).filter(e => e.is_past_due);
+    const exceptions = (await buildExceptions(null)).filter(e => e.is_past_due);
     let applied = 0;
     for (const exc of exceptions) {
-      const txn = queryOne('transactions', t => t.transaction_id === exc.transaction_id);
+      const txn = await queryOne('transactions', t => t.transaction_id === exc.transaction_id);
       if (!txn || txn.status !== 'under_review') continue;
       const defaultAction = exc.default_action === 'pay' ? 'approved' : 'declined';
-      update('transactions', t => t.transaction_id === exc.transaction_id, () => ({
+      await update('transactions', t => t.transaction_id === exc.transaction_id, () => ({
         status: defaultAction, reviewer_decision: exc.default_action === 'pay' ? 'approve' : 'decline',
         reviewer_notes: `DEFAULT ACTION: ${exc.default_action.toUpperCase()} — past cutoff ${exc.cutoff_time}`, decision_at: new Date().toISOString()
       }));
-      insert('audit_logs', {
+      await insert('audit_logs', {
         transaction_id: exc.transaction_id,
         event_type:    'human_reviewed',
         event_summary: `⏰ DEFAULT ACTION: ${exc.default_action.toUpperCase()} — review window expired at ${exc.cutoff_time}`,

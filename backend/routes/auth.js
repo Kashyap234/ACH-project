@@ -1,10 +1,10 @@
-// backend/routes/auth.js — Admin-managed user creation with email notification
+// backend/routes/auth.js — Admin-managed user creation with email notification (Firestore async)
 const express  = require('express');
 const router   = express.Router();
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const { insert, queryOne, queryAll, update } = require('../database/db');
+const { insert, queryOne, queryAll, update, remove } = require('../database/db');
 const { authenticate, JWT_SECRET } = require('../middleware/auth');
 
 const ROLES = ['reviewer', 'analyst', 'admin', 'supervisor'];
@@ -37,7 +37,6 @@ async function sendWelcomeEmail({ to, full_name, username, password, role }) {
     'This is an automated message from the ACH Triage AI System v3.0.',
   ].join('\n');
 
-  // Try nodemailer if SMTP is configured
   const smtpHost = process.env.SMTP_HOST;
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
@@ -61,7 +60,6 @@ async function sendWelcomeEmail({ to, full_name, username, password, role }) {
     }
   }
 
-  // Fallback: log credentials to console (dev mode)
   console.log('\n╔══════════════════════════════════════════╗');
   console.log('║  NEW USER CREDENTIALS (email not sent)   ║');
   console.log('╠══════════════════════════════════════════╣');
@@ -73,7 +71,6 @@ async function sendWelcomeEmail({ to, full_name, username, password, role }) {
   return { sent: false, reason: 'SMTP not configured — credentials logged to server console' };
 }
 
-// Generate a secure random password
 function generatePassword(len = 12) {
   const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$';
   return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
@@ -87,19 +84,19 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Username and password are required.' });
     }
 
-    const user = queryOne('users', u => u.username.toLowerCase() === username.toLowerCase());
+    const user = await queryOne('users', u => u.username.toLowerCase() === username.toLowerCase());
     if (!user) return res.status(401).json({ success: false, error: 'Invalid username or password.' });
     if (!user.is_active) return res.status(403).json({ success: false, error: 'Account is disabled. Contact an administrator.' });
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ success: false, error: 'Invalid username or password.' });
 
-    update('users', u => u.user_id === user.user_id, () => ({ last_login: new Date().toISOString() }));
+    await update('users', u => u.user_id === user.user_id, () => ({ last_login: new Date().toISOString() }));
 
     const token = signToken(user);
     const { password_hash: _, ...safeUser } = user;
 
-    insert('audit_logs', {
+    await insert('audit_logs', {
       transaction_id: null, event_type: 'user_login',
       event_summary: 'User logged in: ' + user.full_name + ' (' + user.username + ')',
       event_data: { user_id: user.user_id, role: user.role },
@@ -115,9 +112,9 @@ router.post('/login', async (req, res) => {
 });
 
 // ── GET /api/auth/me ──────────────────────────────────────────────────────────
-router.get('/me', authenticate, (req, res) => {
+router.get('/me', authenticate, async (req, res) => {
   try {
-    const user = queryOne('users', u => u.user_id === req.user.user_id);
+    const user = await queryOne('users', u => u.user_id === req.user.user_id);
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
     const { password_hash: _, ...safeUser } = user;
     res.json({ success: true, user: safeUser });
@@ -145,11 +142,10 @@ router.post('/create-user', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid email address.' });
     }
 
-    // Check uniqueness
-    if (queryOne('users', u => u.username.toLowerCase() === username.toLowerCase())) {
+    if (await queryOne('users', u => u.username.toLowerCase() === username.toLowerCase())) {
       return res.status(409).json({ success: false, error: 'Username "' + username + '" is already taken.' });
     }
-    if (queryOne('users', u => u.email.toLowerCase() === email.toLowerCase())) {
+    if (await queryOne('users', u => u.email.toLowerCase() === email.toLowerCase())) {
       return res.status(409).json({ success: false, error: 'Email "' + email + '" is already registered.' });
     }
 
@@ -157,19 +153,18 @@ router.post('/create-user', authenticate, async (req, res) => {
     const password_hash = await bcrypt.hash(plainPassword, 12);
     const user_id = 'USR-' + uuidv4().slice(0, 8).toUpperCase();
 
-    const user = insert('users', {
+    const user = await insert('users', {
       user_id, username: username.trim(), full_name: full_name.trim(),
       email: email.trim().toLowerCase(), password_hash, role,
       is_active: true, last_login: null,
       created_by: req.user.username,
     });
 
-    // Send welcome email (or log to console)
     const emailResult = await sendWelcomeEmail({
       to: email, full_name, username: username.trim(), password: plainPassword, role
     });
 
-    insert('audit_logs', {
+    await insert('audit_logs', {
       transaction_id: null, event_type: 'user_created',
       event_summary: 'User created by admin ' + req.user.username + ': ' + full_name + ' (' + username + ') — Role: ' + role,
       event_data: { user_id, role, created_by: req.user.username, email_sent: emailResult.sent },
@@ -184,7 +179,6 @@ router.post('/create-user', authenticate, async (req, res) => {
       message: 'User "' + username + '" created successfully. ' + (emailResult.sent ? 'Credentials sent to ' + email + '.' : 'Credentials logged to server console (SMTP not configured).'),
       user: safeUser,
       email_status: emailResult,
-      // Return plain password only in response (so admin can share manually if SMTP not set)
       temp_password: plainPassword,
     });
   } catch (e) {
@@ -194,12 +188,12 @@ router.post('/create-user', authenticate, async (req, res) => {
 });
 
 // ── GET /api/auth/users — Admin: list all users ───────────────────────────────
-router.get('/users', authenticate, (req, res) => {
+router.get('/users', authenticate, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ success: false, error: 'Admin access required.' });
     }
-    const users = queryAll('users', null, { orderBy: 'created_at', desc: true });
+    const users = await queryAll('users', null, { orderBy: 'created_at', desc: true });
     const safe  = users.map(({ password_hash, ...u }) => u);
     res.json({ success: true, data: safe, total: safe.length });
   } catch (e) {
@@ -215,10 +209,9 @@ router.patch('/users/:user_id', authenticate, async (req, res) => {
     }
 
     const { user_id } = req.params;
-    const existing = queryOne('users', u => u.user_id === user_id);
+    const existing = await queryOne('users', u => u.user_id === user_id);
     if (!existing) return res.status(404).json({ success: false, error: 'User not found.' });
 
-    // Prevent admin from deactivating themselves
     if (user_id === req.user.user_id && req.body.is_active === false) {
       return res.status(400).json({ success: false, error: 'You cannot deactivate your own account.' });
     }
@@ -228,28 +221,26 @@ router.patch('/users/:user_id', authenticate, async (req, res) => {
     if (req.body.is_active  !== undefined) allowed.is_active  = Boolean(req.body.is_active);
     if (req.body.full_name  !== undefined) allowed.full_name  = req.body.full_name;
 
-    // Reset password
     if (req.body.reset_password) {
       const newPass = generatePassword();
       allowed.password_hash = await bcrypt.hash(newPass, 12);
-      // Send new password email
       await sendWelcomeEmail({ to: existing.email, full_name: existing.full_name, username: existing.username, password: newPass, role: allowed.role || existing.role });
-      allowed._temp_password = newPass; // temporary, removed before save
+      allowed._temp_password = newPass;
     }
 
     const tempPass = allowed._temp_password;
     delete allowed._temp_password;
 
-    update('users', u => u.user_id === user_id, () => allowed);
+    await update('users', u => u.user_id === user_id, () => allowed);
 
-    insert('audit_logs', {
+    await insert('audit_logs', {
       transaction_id: null, event_type: 'user_updated',
       event_summary: 'User updated by ' + req.user.username + ': ' + existing.username + ' — Changed: ' + Object.keys(allowed).join(', '),
       event_data: { user_id, changes: allowed, by: req.user.username },
       actor: req.user.username, severity: 'warning'
     });
 
-    const updated = queryOne('users', u => u.user_id === user_id);
+    const updated = await queryOne('users', u => u.user_id === user_id);
     const { password_hash: _, ...safeUser } = updated;
 
     res.json({
@@ -265,7 +256,7 @@ router.patch('/users/:user_id', authenticate, async (req, res) => {
 });
 
 // ── DELETE /api/auth/users/:user_id — Admin: permanently delete user ──────────
-router.delete('/users/:user_id', authenticate, (req, res) => {
+router.delete('/users/:user_id', authenticate, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ success: false, error: 'Admin access required.' });
@@ -276,13 +267,12 @@ router.delete('/users/:user_id', authenticate, (req, res) => {
       return res.status(400).json({ success: false, error: 'You cannot delete your own account.' });
     }
 
-    const existing = queryOne('users', u => u.user_id === user_id);
+    const existing = await queryOne('users', u => u.user_id === user_id);
     if (!existing) return res.status(404).json({ success: false, error: 'User not found.' });
 
-    const { remove } = require('../database/db');
-    remove('users', u => u.user_id === user_id);
+    await remove('users', u => u.user_id === user_id);
 
-    insert('audit_logs', {
+    await insert('audit_logs', {
       transaction_id: null, event_type: 'user_deleted',
       event_summary: 'User DELETED by ' + req.user.username + ': ' + existing.full_name + ' (' + existing.username + ')',
       event_data: { user_id, deleted_username: existing.username, role: existing.role },
@@ -306,14 +296,14 @@ router.post('/change-password', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, error: 'New password must be at least 6 characters.' });
     }
 
-    const user = queryOne('users', u => u.user_id === req.user.user_id);
+    const user = await queryOne('users', u => u.user_id === req.user.user_id);
     const valid = await bcrypt.compare(current_password, user.password_hash);
     if (!valid) return res.status(401).json({ success: false, error: 'Current password is incorrect.' });
 
     const password_hash = await bcrypt.hash(new_password, 12);
-    update('users', u => u.user_id === req.user.user_id, () => ({ password_hash }));
+    await update('users', u => u.user_id === req.user.user_id, () => ({ password_hash }));
 
-    insert('audit_logs', {
+    await insert('audit_logs', {
       transaction_id: null, event_type: 'password_changed',
       event_summary: 'Password changed by ' + user.username,
       event_data: { user_id: user.user_id }, actor: user.username, severity: 'info'

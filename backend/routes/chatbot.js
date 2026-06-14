@@ -90,7 +90,6 @@ function detectDecisionIntent(message) {
   const m = message.toLowerCase();
   const txnIds = extractTxnIds(message);
 
-  // Patterns: "approve TXN-XXX", "reject TXN-XXX", "decline TXN-XXX"
   const approveMatch = /\b(approve|accept|okay|ok|confirm|process)\b/i.test(m);
   const rejectMatch  = /\b(reject|decline|deny|refuse|cancel|block)\b/i.test(m);
 
@@ -99,7 +98,6 @@ function detectDecisionIntent(message) {
     if (rejectMatch)  return { action: 'decline', txnIds };
   }
 
-  // Conversational: "approve the first one", "reject the pending transaction"
   if (approveMatch && (m.includes('transaction') || m.includes('it') || m.includes('this') || m.includes('that'))) {
     return { action: 'approve', txnIds: [] };
   }
@@ -110,15 +108,16 @@ function detectDecisionIntent(message) {
   return null;
 }
 
-// ── Format transaction detail string for LLM context ─────────────────────────
-function txnDetailForContext(t) {
+// ── Format transaction detail string for LLM context (ASYNC) ─────────────────
+async function txnDetailForContext(t) {
   if (!t) return null;
-  const auditLogs = queryAll('audit_logs', l => l.transaction_id === t.transaction_id,
+  const auditLogs = await queryAll('audit_logs', l => l.transaction_id === t.transaction_id,
     { orderBy: 'created_at', desc: true, limit: 5 });
   const flags = (t.risk_flags || []).map(f =>
     '    [' + (f.severity || 'INFO').toUpperCase() + '] ' + f.rule_name + ': ' + f.description
   ).join('\n') || '    None';
-  const audit = auditLogs.map(l => '    ' + l.actor + ': ' + l.event_summary).join('\n') || '    None';
+  const audit = (Array.isArray(auditLogs) ? auditLogs : [])
+    .map(l => '    ' + l.actor + ': ' + l.event_summary).join('\n') || '    None';
   return [
     'Transaction ID   : ' + t.transaction_id,
     'Company          : ' + (t.company_name || 'N/A'),
@@ -140,9 +139,9 @@ function txnDetailForContext(t) {
   ].filter(Boolean).join('\n');
 }
 
-// ── Build comprehensive live system context ───────────────────────────────────
-function buildLiveContext() {
-  const allTxns      = queryAll('transactions');
+// ── Build comprehensive live system context (ASYNC) ───────────────────────────
+async function buildLiveContext() {
+  const allTxns      = await queryAll('transactions');
   const total        = allTxns.length;
   const autoApproved = allTxns.filter(t => t.status === 'auto_approved').length;
   const approved     = allTxns.filter(t => t.status === 'approved').length;
@@ -157,11 +156,14 @@ function buildLiveContext() {
   const todayCount = allTxns.filter(t => t.created_at?.startsWith(todayStr)).length;
   const autoRate   = total > 0 ? Math.round((autoApproved / total) * 100) : 0;
 
-  const learning   = getLearningStats();
-  const accounts   = queryAll('accounts');
-  const auditLogs  = queryAll('audit_logs', null, { orderBy: 'created_at', desc: true, limit: 10 });
-  const recentTxns = allTxns.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
-  const l3Txns     = allTxns.filter(t => t.risk_level === 3);
+  const [learning, accounts, auditLogs] = await Promise.all([
+    getLearningStats(),
+    queryAll('accounts'),
+    queryAll('audit_logs', null, { orderBy: 'created_at', desc: true, limit: 10 }),
+  ]);
+
+  const recentTxns  = allTxns.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
+  const l3Txns      = allTxns.filter(t => t.risk_level === 3);
   const pendingTxns = allTxns.filter(t => t.status === 'under_review');
 
   const txnIndex = allTxns.map(t =>
@@ -189,7 +191,7 @@ function buildLiveContext() {
     'Top Fraud Indicators: ' + ((learning.topFraudIndicators || []).map(f => f.indicator + '(' + f.count + 'x)').join(', ') || 'None'),
     '',
     '## ACCOUNTS',
-    accounts.map(a => a.account_name + ': Filter=' + a.filter_mode + ', Default=' + a.default_action).join('\n') || 'None',
+    (Array.isArray(accounts) ? accounts : []).map(a => a.account_name + ': Filter=' + a.filter_mode + ', Default=' + a.default_action).join('\n') || 'None',
     '',
     '## ALL TRANSACTION INDEX (ID | Company | Amount | Status | Risk | Score | SEC | Date)',
     txnIndex || '(No transactions)',
@@ -204,20 +206,20 @@ function buildLiveContext() {
     l3Txns.slice(0, 10).map(t => t.transaction_id + ': ' + t.company_name + ' | $' + t.amount + ' | ' + t.status).join('\n') || 'None',
     '',
     '## RECENT AUDIT EVENTS',
-    auditLogs.map(l => '[' + l.actor + '] ' + l.event_summary).join('\n'),
+    (Array.isArray(auditLogs) ? auditLogs : []).map(l => '[' + l.actor + '] ' + l.event_summary).join('\n'),
   ].join('\n');
 }
 
-// ── Execute approve/reject decision ──────────────────────────────────────────
+// ── Execute approve/reject decision (ASYNC) ───────────────────────────────────
 async function executeDecision(txnId, action, reviewer, notes) {
-  const txn = queryOne('transactions', t => t.transaction_id === txnId);
+  const txn = await queryOne('transactions', t => t.transaction_id === txnId);
   if (!txn) return { success: false, error: 'Transaction ' + txnId + ' not found.' };
   if (txn.status !== 'under_review') {
     return { success: false, error: 'Transaction ' + txnId + ' is not under review (current status: ' + txn.status + '). Only pending transactions can be approved or declined.' };
   }
 
   const newStatus = action === 'approve' ? 'approved' : 'declined';
-  update('transactions', t => t.transaction_id === txnId, () => ({
+  await update('transactions', t => t.transaction_id === txnId, () => ({
     status:            newStatus,
     reviewer_decision: action,
     reviewer_notes:    notes || 'Decision made via AI Chatbot',
@@ -231,7 +233,7 @@ async function executeDecision(txnId, action, reviewer, notes) {
   const riskResult = { riskLevel: txn.risk_level, riskScore: txn.risk_score, riskFlags: txn.risk_flags || [] };
   recordDecision(txn, action, { additional_notes: notes || 'Via chatbot' }, riskResult).catch(() => {});
 
-  insert('audit_logs', {
+  await insert('audit_logs', {
     transaction_id: txnId,
     event_type:     action === 'approve' ? 'human_approved' : 'human_declined',
     event_summary:  (action === 'approve' ? 'Approved' : 'Declined')
@@ -277,7 +279,6 @@ router.post('/message', optionalAuth, async (req, res) => {
 
       const { action, txnIds } = decisionIntent;
 
-      // If specific IDs given, process them
       if (txnIds.length > 0) {
         const results = await Promise.all(txnIds.map(id => executeDecision(id, action, user, null)));
         const successful = results.filter(r => r.success);
@@ -298,20 +299,21 @@ router.post('/message', optionalAuth, async (req, res) => {
       }
 
       // No specific ID — ask the user which one
-      const pendingTxns = queryAll('transactions', t => t.status === 'under_review').slice(0, 5);
-      if (pendingTxns.length === 0) {
+      const pendingTxns = await queryAll('transactions', t => t.status === 'under_review');
+      const pendingSlice = pendingTxns.slice(0, 5);
+      if (pendingSlice.length === 0) {
         return res.json({
           success: true,
           reply: 'There are no transactions currently pending review to ' + action + '.',
           source: 'system'
         });
       }
-      const list = pendingTxns.map(t =>
+      const list = pendingSlice.map(t =>
         '• **' + t.transaction_id + '** — ' + t.company_name + ' | $' + Number(t.amount).toLocaleString() + ' | Risk L' + t.risk_level
       ).join('\n');
       return res.json({
         success: true,
-        reply: 'Which transaction would you like to **' + action + '**? Here are the ones currently under review:\n\n' + list + '\n\nJust reply with the transaction ID, e.g. *"' + action + ' ' + pendingTxns[0].transaction_id + '"*',
+        reply: 'Which transaction would you like to **' + action + '**? Here are the ones currently under review:\n\n' + list + '\n\nJust reply with the transaction ID, e.g. *"' + action + ' ' + pendingSlice[0].transaction_id + '"*',
         source: 'system'
       });
     }
@@ -320,18 +322,19 @@ router.post('/message', optionalAuth, async (req, res) => {
     const mentionedIds = extractTxnIds(message);
     let specificContext = '';
     if (mentionedIds.length > 0) {
-      const details = mentionedIds.map(id => {
-        const t = queryOne('transactions', tx => tx.transaction_id === id);
+      const details = await Promise.all(mentionedIds.map(async id => {
+        const t = await queryOne('transactions', tx => tx.transaction_id === id);
         if (t) {
-          return '\n=== FULL DETAILS FOR ' + id + ' ===\n' + txnDetailForContext(t);
+          const detail = await txnDetailForContext(t);
+          return '\n=== FULL DETAILS FOR ' + id + ' ===\n' + detail;
         }
         return '\n=== NOTE: ' + id + ' does NOT exist in the database. ===';
-      });
+      }));
       specificContext = details.join('\n');
     }
 
     // ── Step 3: Build full live context + conversation history ─────────────
-    const liveContext  = buildLiveContext();
+    const liveContext  = await buildLiveContext();
     const historyStr   = history.slice(-12)
       .map(h => (h.role === 'user' ? 'User' : 'Assistant') + ': ' + h.content)
       .join('\n');
@@ -418,9 +421,9 @@ router.post('/crud', authenticate, async (req, res) => {
     // READ
     if (operation === 'read') {
       if (!transaction_id) return res.status(400).json({ success: false, error: 'transaction_id required' });
-      const txn = queryOne('transactions', t => t.transaction_id === transaction_id);
+      const txn = await queryOne('transactions', t => t.transaction_id === transaction_id);
       if (!txn) return res.status(404).json({ success: false, error: 'Not found: ' + transaction_id });
-      const auditLogs = queryAll('audit_logs', l => l.transaction_id === transaction_id, { orderBy: 'created_at', desc: true, limit: 5 });
+      const auditLogs = await queryAll('audit_logs', l => l.transaction_id === transaction_id, { orderBy: 'created_at', desc: true, limit: 5 });
       return res.json({ success: true, operation: 'read', data: { ...txn, audit_logs: auditLogs } });
     }
 
@@ -454,6 +457,7 @@ router.post('/crud', authenticate, async (req, res) => {
       let status = 'pending', complianceNotes = null, aiBrief = null, aiRec = null, aiConf = null;
       if (riskResult.riskLevel === 1) {
         complianceNotes = await generateComplianceNotes(txn, riskResult);
+        aiBrief = complianceNotes;
         status = 'auto_approved';
       } else {
         const brief = await generateReviewBrief(txn, riskResult);
@@ -461,12 +465,12 @@ router.post('/crud', authenticate, async (req, res) => {
         status = 'under_review';
       }
 
-      const saved = insert('transactions', {
+      const saved = await insert('transactions', {
         ...txn, risk_level: riskResult.riskLevel, risk_score: riskResult.riskScore,
         risk_flags: riskResult.riskFlags, ai_brief: aiBrief,
         compliance_notes: complianceNotes, ai_recommendation: aiRec, ai_confidence: aiConf, status
       });
-      insert('audit_logs', {
+      await insert('audit_logs', {
         transaction_id: txnId, event_type: 'transaction_created',
         event_summary: '[CHATBOT] Created by ' + user.username + ': ' + txn.company_name + ' $' + txn.amount,
         event_data: { risk_level: riskResult.riskLevel, source: 'chatbot_crud' },
@@ -483,38 +487,39 @@ router.post('/crud', authenticate, async (req, res) => {
     // UPDATE
     if (operation === 'update') {
       if (!transaction_id) return res.status(400).json({ success: false, error: 'transaction_id required' });
-      const existing = queryOne('transactions', t => t.transaction_id === transaction_id);
+      const existing = await queryOne('transactions', t => t.transaction_id === transaction_id);
       if (!existing) return res.status(404).json({ success: false, error: 'Not found: ' + transaction_id });
 
       const protectedFields = ['transaction_id', 'id', 'created_at', 'risk_flags', 'ai_brief', 'compliance_notes'];
       const allowed = Object.fromEntries(Object.entries(data).filter(([k]) => !protectedFields.includes(k)));
       if (!Object.keys(allowed).length) return res.status(400).json({ success: false, error: 'No valid fields to update.' });
 
-      update('transactions', t => t.transaction_id === transaction_id, () => allowed);
-      insert('audit_logs', {
+      await update('transactions', t => t.transaction_id === transaction_id, () => allowed);
+      await insert('audit_logs', {
         transaction_id, event_type: 'transaction_updated',
         event_summary: '[CHATBOT] Updated by ' + user.username + ': ' + Object.keys(allowed).join(', '),
         event_data: { updated_fields: allowed }, actor: user.full_name, severity: 'warning'
       });
 
+      const updated = await queryOne('transactions', t => t.transaction_id === transaction_id);
       return res.json({
         success: true, operation: 'update',
         message: 'Transaction **' + transaction_id + '** updated. Changed: ' + Object.keys(allowed).join(', '),
-        data: queryOne('transactions', t => t.transaction_id === transaction_id)
+        data: updated
       });
     }
 
     // DELETE
     if (operation === 'delete') {
       if (!transaction_id) return res.status(400).json({ success: false, error: 'transaction_id required' });
-      const existing = queryOne('transactions', t => t.transaction_id === transaction_id);
+      const existing = await queryOne('transactions', t => t.transaction_id === transaction_id);
       if (!existing) return res.status(404).json({ success: false, error: 'Not found: ' + transaction_id });
       if (['approved', 'auto_approved'].includes(existing.status)) {
         return res.status(403).json({ success: false, error: 'Cannot delete an already-' + existing.status + ' transaction.' });
       }
 
-      remove('transactions', t => t.transaction_id === transaction_id);
-      insert('audit_logs', {
+      await remove('transactions', t => t.transaction_id === transaction_id);
+      await insert('audit_logs', {
         transaction_id, event_type: 'transaction_deleted',
         event_summary: '[CHATBOT] DELETED by ' + user.username + ': ' + existing.company_name + ' $' + existing.amount,
         event_data: { company_name: existing.company_name, amount: existing.amount },
@@ -534,9 +539,13 @@ router.post('/crud', authenticate, async (req, res) => {
 });
 
 // ── GET /api/chatbot/context ──────────────────────────────────────────────────
-router.get('/context', (req, res) => {
-  try { res.json({ success: true, data: buildLiveContext() }); }
-  catch (e) { res.status(500).json({ success: false, error: e.message }); }
+router.get('/context', async (req, res) => {
+  try {
+    const ctx = await buildLiveContext();
+    res.json({ success: true, data: ctx });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 module.exports = router;
