@@ -1,11 +1,10 @@
-// backend/services/learningPipeline.js — Rich feature vector learning
+// backend/services/learningPipeline.js — Rich feature vector learning (Firestore async)
 const crypto = require('crypto');
 const { queryAll, queryOne, insert, update } = require('../database/db');
 
 const MIN_DECISIONS  = 5;
 const CONF_THRESHOLD = 0.85;
 
-// ── Confidence weight by reviewer certainty ─────────────────────────────────
 const CONFIDENCE_WEIGHTS = { HIGH: 1.0, MEDIUM: 0.7, LOW: 0.4 };
 
 function getAmountBucket(amount) {
@@ -16,30 +15,22 @@ function getAmountBucket(amount) {
   return 'xlarge';
 }
 
-// ── Rich feature vector from transaction + reviewer enrichment ──────────────
 function buildFeatureVector(txn, riskFlags, reviewData = {}) {
   return {
-    // Transaction identity
     sec_code:             txn.sec_code,
     transaction_code:     txn.transaction_code || 'unknown',
     transaction_type:     txn.transaction_type,
     amount_bucket:        getAmountBucket(txn.amount),
     account_type:         txn.account_type || 'checking',
     is_prenote:           txn.prenote || false,
-
-    // Risk indicators
     flag_codes:           (riskFlags || []).map(f => f.rule_code).sort(),
     flag_count:           (riskFlags || []).length,
     max_flag_level:       (riskFlags || []).reduce((m, f) => Math.max(m, f.flag_level), 1),
     has_ofac_flag:        (riskFlags || []).some(f => f.category === 'sanctions'),
     has_aml_flag:         txn.aml_flag || false,
-
-    // Compliance
     has_addenda:          txn.addenda_record_indicator === '1' || txn.addenda_record_indicator === 1,
     authorization_type:   txn.authorization_type || null,
     ofac_screened:        txn.ofac_screened || false,
-
-    // Reviewer enrichment (from rich review form)
     identity_verified:        reviewData.identity_verified || false,
     identity_method:          reviewData.identity_verification_method || null,
     counterparty_type:        reviewData.counterparty_type || 'UNKNOWN',
@@ -82,52 +73,37 @@ async function recordDecision(txn, decision, reviewData, riskResult) {
 
   const confWeight = CONFIDENCE_WEIGHTS[reviewer_confidence || 'MEDIUM'];
 
-  // 1. Insert rich review decision
-  insert('review_decisions', {
+  await insert('review_decisions', {
     transaction_id:                txn.transaction_id,
     decision,
     decision_reason:               decision_reason || null,
     reviewer_confidence:           reviewer_confidence || 'MEDIUM',
     confidence_weight:             confWeight,
     time_to_decide_seconds:        time_to_decide_seconds || null,
-
-    // Risk context
     risk_level_at_decision:        riskResult.riskLevel,
     risk_score_at_decision:        riskResult.riskScore,
     risk_flags_at_decision:        riskResult.riskFlags,
     ai_recommendation:             txn.ai_recommendation || null,
     ai_confidence:                 txn.ai_confidence || null,
-
-    // Identity & counterparty
     identity_verified:             identity_verified || false,
     identity_verification_method:  identity_verification_method || null,
     counterparty_type:             counterparty_type || null,
     account_ownership_confirmed:   account_ownership_confirmed || false,
-
-    // Fraud assessment
     fraud_indicators:              fraud_indicators || [],
     risk_override_reason:          risk_override_reason || null,
-
-    // Escalation
     escalation_level:              escalation_level || 'none',
     escalation_reason:             escalation_reason || null,
-
-    // Business justification
     business_purpose:              business_purpose || null,
     authorization_reviewed:        authorization_reviewed || false,
     authorization_type_confirmed:  authorization_type_confirmed || null,
     customer_contacted:            customer_contacted || false,
     customer_contact_outcome:      customer_contact_outcome || null,
-
-    // Return info
     recommended_return_code:       recommended_return_code || null,
     return_code_reason:            return_code_reason || null,
-
     additional_notes:              additional_notes || null,
   });
 
-  // 2. Also insert into legacy human_decisions for backward compat
-  insert('human_decisions', {
+  await insert('human_decisions', {
     transaction_id:            txn.transaction_id,
     reviewer_id:               'reviewer_01',
     reviewer_name:             'Risk Analyst',
@@ -140,25 +116,23 @@ async function recordDecision(txn, decision, reviewData, riskResult) {
     ai_confidence_at_decision: txn.ai_confidence || null
   });
 
-  // 3. Update / create learning pattern
-  const patternHash    = generatePatternHash(txn, riskResult.riskFlags);
-  const description    = buildPatternDescription(txn, riskResult.riskFlags);
-  const featureVector  = buildFeatureVector(txn, riskResult.riskFlags, reviewData);
-  const existing       = queryOne('learning_patterns', p => p.pattern_hash === patternHash);
+  // Update / create learning pattern
+  const patternHash   = generatePatternHash(txn, riskResult.riskFlags);
+  const description   = buildPatternDescription(txn, riskResult.riskFlags);
+  const featureVector = buildFeatureVector(txn, riskResult.riskFlags, reviewData);
+  const existing      = await queryOne('learning_patterns', p => p.pattern_hash === patternHash);
 
   if (existing) {
-    // Weighted score update
     const approveW = existing.approve_weight + (decision === 'approve' ? confWeight : 0);
     const declineW = existing.decline_weight + (decision === 'decline' ? confWeight : 0);
     const totalW   = approveW + declineW;
     const newConf  = totalW > 0 ? approveW / totalW : 0;
     const newTotal = existing.total_decisions + 1;
 
-    // Aggregate fraud indicator counts
     const flagCounts = { ...(existing.fraud_indicator_counts || {}) };
     (fraud_indicators || []).forEach(fi => { flagCounts[fi] = (flagCounts[fi] || 0) + 1; });
 
-    update('learning_patterns', p => p.pattern_hash === patternHash, () => ({
+    await update('learning_patterns', p => p.pattern_hash === patternHash, () => ({
       approve_count:            existing.approve_count + (decision === 'approve' ? 1 : 0),
       decline_count:            existing.decline_count + (decision === 'decline' ? 1 : 0),
       approve_weight:           approveW,
@@ -173,19 +147,17 @@ async function recordDecision(txn, decision, reviewData, riskResult) {
       most_common_purpose:      business_purpose || existing.most_common_purpose,
     }));
 
-    // Check promotion
-    const updated = queryOne('learning_patterns', p => p.pattern_hash === patternHash);
+    const updated = await queryOne('learning_patterns', p => p.pattern_hash === patternHash);
     if (!existing.promoted_to_level1 && !existing.is_frozen && updated.total_decisions >= MIN_DECISIONS && updated.confidence_score >= CONF_THRESHOLD) {
-      _promotePattern(patternHash, updated.total_decisions, updated.confidence_score);
+      await _promotePattern(patternHash, updated.total_decisions, updated.confidence_score);
     }
-    // Check demotion
     if (existing.promoted_to_level1 && updated.confidence_score < 0.70) {
-      _demotePattern(patternHash, updated.confidence_score);
+      await _demotePattern(patternHash, updated.confidence_score);
     }
   } else {
     const approveW = decision === 'approve' ? confWeight : 0;
     const declineW = decision === 'decline' ? confWeight : 0;
-    insert('learning_patterns', {
+    await insert('learning_patterns', {
       pattern_hash:           patternHash,
       pattern_description:    description,
       feature_vector:         featureVector,
@@ -210,11 +182,10 @@ async function recordDecision(txn, decision, reviewData, riskResult) {
     });
   }
 
-  // 4. Audit log
-  insert('audit_logs', {
+  await insert('audit_logs', {
     transaction_id: txn.transaction_id,
     event_type:     'human_reviewed',
-    event_summary:  `Human ${decision.toUpperCase()}${decision === 'approve' ? 'D' : 'D'} · Confidence: ${reviewer_confidence || 'MEDIUM'} · ${business_purpose || 'No purpose stated'}`,
+    event_summary:  `Human ${decision.toUpperCase()}D · Confidence: ${reviewer_confidence || 'MEDIUM'} · ${business_purpose || 'No purpose stated'}`,
     event_data:     {
       decision, risk_level: riskResult.riskLevel,
       identity_verified, fraud_indicators, escalation_level,
@@ -226,13 +197,13 @@ async function recordDecision(txn, decision, reviewData, riskResult) {
   });
 }
 
-function _promotePattern(hash, total, conf) {
-  update('learning_patterns', p => p.pattern_hash === hash, () => ({
+async function _promotePattern(hash, total, conf) {
+  await update('learning_patterns', p => p.pattern_hash === hash, () => ({
     promoted_to_level1: true,
     promotion_date:     new Date().toISOString(),
     promotion_reason:   `Auto-promoted: ${total} decisions, ${Math.round(conf * 100)}% weighted approval rate`,
   }));
-  insert('audit_logs', {
+  await insert('audit_logs', {
     transaction_id: null,
     event_type:     'pattern_promoted',
     event_summary:  `🚀 Pattern ${hash} promoted to Level 1 auto-approval (${Math.round(conf * 100)}% confidence, ${total} decisions)`,
@@ -243,14 +214,15 @@ function _promotePattern(hash, total, conf) {
   console.log(`🚀 Pattern ${hash} promoted to Level 1 (${Math.round(conf * 100)}% confidence)`);
 }
 
-function _demotePattern(hash, conf) {
-  update('learning_patterns', p => p.pattern_hash === hash, () => ({
+async function _demotePattern(hash, conf) {
+  const existing = await queryOne('learning_patterns', p => p.pattern_hash === hash);
+  await update('learning_patterns', p => p.pattern_hash === hash, () => ({
     promoted_to_level1: false,
-    demotion_count:     (queryOne('learning_patterns', p => p.pattern_hash === hash)?.demotion_count || 0) + 1,
+    demotion_count:     (existing?.demotion_count || 0) + 1,
     promotion_date:     null,
     promotion_reason:   null,
   }));
-  insert('audit_logs', {
+  await insert('audit_logs', {
     transaction_id: null,
     event_type:     'pattern_demoted',
     event_summary:  `⬇️ Pattern ${hash} DEMOTED from Level 1 (confidence dropped to ${Math.round(conf * 100)}%)`,
@@ -260,19 +232,18 @@ function _demotePattern(hash, conf) {
   });
 }
 
-function checkPatternMatch(txn, riskFlags) {
+async function checkPatternMatch(txn, riskFlags) {
   const hash = generatePatternHash(txn, riskFlags);
-  return queryOne('learning_patterns', p => p.pattern_hash === hash && p.promoted_to_level1 && !p.is_frozen) || null;
+  return await queryOne('learning_patterns', p => p.pattern_hash === hash && p.promoted_to_level1 && !p.is_frozen) || null;
 }
 
-function getLearningStats() {
-  const all      = queryAll('learning_patterns');
+async function getLearningStats() {
+  const all      = await queryAll('learning_patterns');
   const promoted = all.filter(p => p.promoted_to_level1);
   const totalDec = all.reduce((a, p) => a + (p.total_decisions || 0), 0);
-  const totalRev = queryAll('review_decisions').length;
+  const totalRev = (await queryAll('review_decisions')).length;
 
-  // Most common fraud indicators across all declined reviews
-  const allDeclines = queryAll('review_decisions', r => r.decision === 'decline');
+  const allDeclines = await queryAll('review_decisions', r => r.decision === 'decline');
   const fiCounts = {};
   allDeclines.forEach(r => (r.fraud_indicators || []).forEach(fi => { fiCounts[fi] = (fiCounts[fi] || 0) + 1; }));
   const topFraudIndicators = Object.entries(fiCounts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => ({ indicator: k, count: v }));

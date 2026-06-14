@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { analyticsApi } from '../api/client';
+import TransactionDetailModal from '../components/TransactionDetailModal';
 
 function StatCard({ label, value, sub, icon, color, prefix = '', suffix = '' }) {
   return (
@@ -46,7 +47,7 @@ function RiskDonut({ l1, l2, l3 }) {
   );
 }
 
-function RecentActivity({ items }) {
+function RecentActivity({ items, onTxnClick }) {
   const icons = {
     transaction_created: '📥',
     auto_approved:       '✅',
@@ -61,13 +62,27 @@ function RecentActivity({ items }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {items.length === 0 && <div className="empty-state" style={{ padding: '30px 0' }}><p>No activity yet</p></div>}
       {items.map((item, i) => (
-        <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <div key={i}
+          onClick={() => item.transaction_id && onTxnClick(item.transaction_id)}
+          style={{
+            display: 'flex', gap: 12, alignItems: 'flex-start',
+            cursor: item.transaction_id ? 'pointer' : 'default',
+            padding: '8px 10px', borderRadius: 8, marginLeft: -10, marginRight: -10,
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => { if (item.transaction_id) e.currentTarget.style.background = 'var(--bg-primary)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
           <div style={{ fontSize: '1.2rem', flexShrink: 0, marginTop: 2 }}>{icons[item.event_type] || '📌'}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>{item.event_summary}</div>
             {item.company_name && (
               <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>
                 {item.company_name} {item.amount ? `· $${Number(item.amount).toLocaleString()}` : ''}
+              </div>
+            )}
+            {item.transaction_id && (
+              <div style={{ fontSize: '0.65rem', color: 'var(--accent-cyan)', marginTop: 2, fontFamily: 'monospace' }}>
+                {item.transaction_id} · click to view →
               </div>
             )}
           </div>
@@ -81,8 +96,9 @@ function RecentActivity({ items }) {
 }
 
 export default function Dashboard() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData]               = useState(null);
+  const [loading, setLoading]         = useState(true);
+  const [selectedTxnId, setSelectedTxnId] = useState(null);
   const navigate = useNavigate();
 
   const load = () => {
@@ -174,9 +190,16 @@ export default function Dashboard() {
             <div className="card-title">Recent Activity</div>
             <button className="btn btn-ghost btn-sm" onClick={load}>↻ Refresh</button>
           </div>
-          <RecentActivity items={recentActivity || []} />
+          <RecentActivity items={recentActivity || []} onTxnClick={setSelectedTxnId} />
         </div>
       </div>
+
+      {selectedTxnId && (
+        <TransactionDetailModal
+          transactionId={selectedTxnId}
+          onClose={() => setSelectedTxnId(null)}
+        />
+      )}
     </div>
   );
 }

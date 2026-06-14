@@ -1,6 +1,7 @@
 // frontend/src/pages/AuditLog.jsx
 import { useState, useEffect } from 'react';
 import { analyticsApi } from '../api/client';
+import TransactionDetailModal from '../components/TransactionDetailModal';
 
 const EVENT_META = {
   transaction_created: { icon: '📥', color: 'var(--accent-blue)',   label: 'Created'         },
@@ -18,11 +19,12 @@ const EVENT_META = {
 };
 
 export default function AuditLog() {
-  const [logs, setLogs]     = useState([]);
-  const [total, setTotal]   = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage]     = useState(0);
-  const [filter, setFilter] = useState('');
+  const [logs, setLogs]             = useState([]);
+  const [total, setTotal]           = useState(0);
+  const [loading, setLoading]       = useState(true);
+  const [page, setPage]             = useState(0);
+  const [filter, setFilter]         = useState('');
+  const [selectedTxnId, setSelectedTxnId] = useState(null);
   const LIMIT = 20;
 
   const load = (p = 0, f = filter) => {
@@ -70,7 +72,11 @@ export default function AuditLog() {
             {logs.map((log, i) => {
               const meta = EVENT_META[log.event_type] || { icon:'📌', color:'var(--text-secondary)', label: log.event_type };
               return (
-                <div key={log.id} style={{ background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:10, padding:'14px 18px', display:'flex', gap:14, alignItems:'flex-start' }}>
+                <div key={log.id}
+                  onClick={() => log.transaction_id && setSelectedTxnId(log.transaction_id)}
+                  style={{ background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:10, padding:'14px 18px', display:'flex', gap:14, alignItems:'flex-start', cursor: log.transaction_id ? 'pointer' : 'default', transition:'border-color 0.15s' }}
+                  onMouseEnter={e => { if (log.transaction_id) e.currentTarget.style.borderColor = 'var(--accent-blue)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; }}>
                   {/* Timeline dot */}
                   <div style={{ display:'flex', flexDirection:'column', alignItems:'center', flexShrink:0, width:24 }}>
                     <div style={{ fontSize:'1.1rem' }}>{meta.icon}</div>
@@ -104,7 +110,13 @@ export default function AuditLog() {
 
                     {log.transaction_id && (
                       <div style={{ fontSize:'0.72rem', color:'var(--text-muted)', marginTop:3 }}>
-                        <span className="monospace">{log.transaction_id}</span>
+                        <span
+                          className="monospace"
+                          style={{ color:'var(--accent-cyan)', textDecoration:'underline', cursor:'pointer' }}
+                          onClick={e => { e.stopPropagation(); setSelectedTxnId(log.transaction_id); }}
+                          title="Click to view transaction details">
+                          {log.transaction_id}
+                        </span>
                         {log.company_name && ` · ${log.company_name}`}
                         {log.amount && ` · $${Number(log.amount).toLocaleString()}`}
                       </div>
@@ -143,6 +155,13 @@ export default function AuditLog() {
             </div>
           </div>
         </>
+      )}
+
+      {selectedTxnId && (
+        <TransactionDetailModal
+          transactionId={selectedTxnId}
+          onClose={() => setSelectedTxnId(null)}
+        />
       )}
     </div>
   );

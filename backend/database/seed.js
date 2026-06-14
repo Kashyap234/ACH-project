@@ -1,4 +1,4 @@
-// backend/database/seed.js — Full NACHA rules + return code lookup
+// backend/database/seed.js — Full NACHA rules + return code lookup (Firestore async)
 const { queryOne, insert, getTable } = require('./db');
 
 // ── NACHA Risk Rules ────────────────────────────────────────────────────────
@@ -76,22 +76,22 @@ const RETURN_CODES = [
   { code:'R85', title:'Incorrectly Coded Outbound IAT',       category:'technical',     severity:'high',     retryable:false, description:'IAT entry is incorrectly coded and cannot be processed.' },
 ];
 
-function seed() {
-  const rules = getTable('risk_rules');
+async function seed() {
+  const rules = await getTable('risk_rules');
   let seededRules = 0;
   for (const rule of RISK_RULES) {
     if (!rules.find(r => r.rule_code === rule.rule_code)) {
-      insert('risk_rules', { ...rule, is_active: true, trigger_count: 0 });
+      await insert('risk_rules', { ...rule, is_active: true, trigger_count: 0 });
       seededRules++;
     }
   }
   if (seededRules > 0) console.log(`✅ Seeded ${seededRules} NACHA risk rules`);
 
-  const rcodes = getTable('return_codes');
+  const rcodes = await getTable('return_codes');
   let seededCodes = 0;
   for (const rc of RETURN_CODES) {
     if (!rcodes.find(r => r.code === rc.code)) {
-      insert('return_codes', rc);
+      await insert('return_codes', rc);
       seededCodes++;
     }
   }

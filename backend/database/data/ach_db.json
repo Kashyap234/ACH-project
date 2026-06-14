@@ -2179,6 +2179,48 @@
       },
       "actor": "kash234",
       "severity": "info"
+    },
+    {
+      "id": 22,
+      "created_at": "2026-06-08T10:51:38.127Z",
+      "updated_at": "2026-06-08T10:51:38.127Z",
+      "transaction_id": null,
+      "event_type": "user_login",
+      "event_summary": "User logged in: kashyap (kash234)",
+      "event_data": {
+        "user_id": "USR-FD1130AD",
+        "role": "admin"
+      },
+      "actor": "kash234",
+      "severity": "info"
+    },
+    {
+      "id": 23,
+      "created_at": "2026-06-09T08:27:46.987Z",
+      "updated_at": "2026-06-09T08:27:46.987Z",
+      "transaction_id": null,
+      "event_type": "user_login",
+      "event_summary": "User logged in: kashyap (kash234)",
+      "event_data": {
+        "user_id": "USR-FD1130AD",
+        "role": "admin"
+      },
+      "actor": "kash234",
+      "severity": "info"
+    },
+    {
+      "id": 24,
+      "created_at": "2026-06-14T06:31:19.627Z",
+      "updated_at": "2026-06-14T06:31:19.627Z",
+      "transaction_id": null,
+      "event_type": "user_login",
+      "event_summary": "User logged in: kashyap (kash234)",
+      "event_data": {
+        "user_id": "USR-FD1130AD",
+        "role": "admin"
+      },
+      "actor": "kash234",
+      "severity": "info"
     }
   ],
   "batch_jobs": [
@@ -2559,7 +2601,7 @@
     {
       "id": 1,
       "created_at": "2026-06-07T13:15:54.692Z",
-      "updated_at": "2026-06-08T05:27:51.072Z",
+      "updated_at": "2026-06-14T06:31:19.615Z",
       "user_id": "USR-FD1130AD",
       "username": "kash234",
       "full_name": "kashyap",
@@ -2567,7 +2609,7 @@
       "password_hash": "$2b$12$JuJUfKP84wR69pyTKhV3huav5j5M0/ls4paQny9Bj6moWG1zPrBMK",
       "role": "admin",
       "is_active": true,
-      "last_login": "2026-06-08T05:27:51.072Z"
+      "last_login": "2026-06-14T06:31:19.615Z"
     },
     {
       "id": 2,

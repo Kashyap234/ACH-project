@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { transactionsApi } from '../api/client';
+import TransactionDetailModal from '../components/TransactionDetailModal';
 
 const FRAUD_INDICATORS = [
   'VELOCITY_SPIKE','ROUND_AMOUNT','UNUSUAL_HOUR','NEW_COUNTERPARTY',
@@ -43,6 +44,14 @@ const defaultReview = {
   additional_notes: '',
 };
 
+const FINAL_STATUSES = ['approved', 'declined', 'auto_approved'];
+
+const STATUS_CONFIG = {
+  auto_approved: { icon: '🤖', color: 'var(--accent-green)',  label: 'Auto-Approved by AI' },
+  approved:      { icon: '✅', color: 'var(--accent-green)',  label: 'Approved'             },
+  declined:      { icon: '🚫', color: 'var(--accent-red)',    label: 'Declined'             },
+};
+
 function RiskMeter({ score }) {
   const color = score >= 70 ? '#ef4444' : score >= 30 ? '#f59e0b' : '#10b981';
   return (
@@ -65,9 +74,16 @@ function ReviewModal({ txn, onClose, onDecide }) {
   const [done, setDone]     = useState(null);
   const startTime = useRef(Date.now());
 
+  const isLocked   = FINAL_STATUSES.includes(txn.status);
+  const statusConf = STATUS_CONFIG[txn.status];
+
   const flags = Array.isArray(txn.risk_flags) ? txn.risk_flags : JSON.parse(txn.risk_flags || '[]');
   const set = (k, v) => setReview(r => ({ ...r, [k]: v }));
-  const toggleFI = (fi) => set('fraud_indicators', review.fraud_indicators.includes(fi) ? review.fraud_indicators.filter(x => x !== fi) : [...review.fraud_indicators, fi]);
+  const toggleFI = (fi) => set('fraud_indicators',
+    review.fraud_indicators.includes(fi)
+      ? review.fraud_indicators.filter(x => x !== fi)
+      : [...review.fraud_indicators, fi]
+  );
 
   const submit = async (decision) => {
     setSubmitting(true);
@@ -81,11 +97,11 @@ function ReviewModal({ txn, onClose, onDecide }) {
   };
 
   const tabs = [
-    { id:'brief',    label:'🤖 AI Brief'       },
-    { id:'identity', label:'👤 Identity'        },
-    { id:'fraud',    label:'🚨 Fraud Check'     },
-    { id:'business', label:'📋 Business'        },
-    { id:'return',   label:'↩ Return Code'      },
+    { id:'brief',    label:'🤖 AI Brief'    },
+    { id:'identity', label:'👤 Identity'    },
+    { id:'fraud',    label:'🚨 Fraud Check' },
+    { id:'business', label:'📋 Business'   },
+    { id:'return',   label:'↩ Return Code' },
   ];
 
   const Sel = ({ label, k, options }) => (
@@ -116,7 +132,7 @@ function ReviewModal({ txn, onClose, onDecide }) {
           <div>
             <div style={{ display:'flex', gap:8, marginBottom:4 }}>
               <span className={`risk-badge level-${txn.risk_level}`}>Level {txn.risk_level}</span>
-              <span className={`status-badge ${txn.status}`}>{txn.status?.replace('_',' ').toUpperCase()}</span>
+              <span className={`status-badge ${txn.status}`}>{txn.status?.replace(/_/g,' ').toUpperCase()}</span>
               <span style={{ fontSize:'0.72rem', color:'var(--accent-cyan)', fontFamily:'monospace' }}>{txn.sec_code}</span>
             </div>
             <h3 style={{ fontSize:'1.05rem', fontWeight:700 }}>{txn.company_name}</h3>
@@ -128,7 +144,66 @@ function ReviewModal({ txn, onClose, onDecide }) {
         </div>
 
         <div className="modal-body">
-          {done ? (
+
+          {/* ── LOCKED VIEW (already decided) ───────────────────────── */}
+          {isLocked ? (
+            <>
+              {/* Status Banner */}
+              <div style={{
+                display:'flex', alignItems:'center', gap:14, padding:'14px 18px',
+                background:`${statusConf.color}15`, border:`1px solid ${statusConf.color}40`,
+                borderRadius:10, marginBottom:18,
+              }}>
+                <span style={{ fontSize:'2rem' }}>{statusConf.icon}</span>
+                <div>
+                  <div style={{ fontWeight:700, color:statusConf.color, fontSize:'1rem' }}>{statusConf.label}</div>
+                  {txn.reviewer_name && (
+                    <div style={{ fontSize:'0.72rem', color:'var(--text-muted)', marginTop:3 }}>
+                      Decided by <strong style={{ color:'var(--text-secondary)' }}>{txn.reviewer_name}</strong>
+                      {txn.reviewer_role && <span> ({txn.reviewer_role})</span>}
+                      {txn.decision_at && <span> · {new Date(txn.decision_at).toLocaleString()}</span>}
+                    </div>
+                  )}
+                  {txn.status === 'auto_approved' && (
+                    <div style={{ fontSize:'0.72rem', color:'var(--text-muted)', marginTop:3 }}>
+                      Risk Score: {txn.risk_score}/100 · {txn.sec_code} · Evaluated {Array.isArray(txn.risk_flags) ? txn.risk_flags.length : 0} flags
+                    </div>
+                  )}
+                  {txn.reviewer_notes && (
+                    <div style={{ fontSize:'0.75rem', color:'var(--text-secondary)', marginTop:6, fontStyle:'italic' }}>
+                      "{txn.reviewer_notes}"
+                    </div>
+                  )}
+                </div>
+                <div style={{ marginLeft:'auto', fontSize:'0.7rem', color:'var(--accent-yellow)', background:'rgba(245,158,11,0.1)', border:'1px solid rgba(245,158,11,0.3)', borderRadius:6, padding:'4px 10px' }}>
+                  🔒 Locked
+                </div>
+              </div>
+
+              {/* AI Brief (read-only) */}
+              {(txn.ai_brief || txn.compliance_notes) && (
+                <div className="ai-brief-panel">
+                  <div style={{ fontSize:'0.7rem', color:'var(--text-muted)', marginBottom:6, textTransform:'uppercase', letterSpacing:'0.08em' }}>AI Brief</div>
+                  <div className="ai-brief-content">
+                    <ReactMarkdown>{txn.ai_brief || txn.compliance_notes}</ReactMarkdown>
+                  </div>
+                </div>
+              )}
+
+              {/* Risk flags */}
+              {flags.length > 0 && (
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:14 }}>
+                  {flags.map(f => (
+                    <span key={f.rule_code} className={`flag-pill ${f.severity}`} title={f.description}>
+                      {f.severity==='critical'?'🔴':f.severity==='warning'?'🟡':'🔵'} {f.rule_name}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+
+          ) : done ? (
+            /* ── DECISION CONFIRMED ─────────────────────────────────── */
             <div style={{ textAlign:'center', padding:'40px 0' }}>
               <div style={{ fontSize:'3rem', marginBottom:12 }}>{done==='approve'?'✅':'🚫'}</div>
               <div style={{ fontSize:'1.1rem', fontWeight:700, color: done==='approve'?'var(--accent-green)':'var(--accent-red)' }}>
@@ -138,7 +213,9 @@ function ReviewModal({ txn, onClose, onDecide }) {
                 Decision recorded · AI learning pipeline updating…
               </div>
             </div>
+
           ) : (
+            /* ── ACTIVE REVIEW VIEW ─────────────────────────────────── */
             <>
               {/* Meta strip */}
               <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:16 }}>
@@ -316,7 +393,8 @@ function ReviewModal({ txn, onClose, onDecide }) {
           )}
         </div>
 
-        {!done && (
+        {/* Footer — show action buttons only for active under_review transactions */}
+        {!isLocked && !done && (
           <div className="modal-footer">
             <button className="btn btn-ghost" onClick={onClose} disabled={submitting}>Cancel</button>
             <button className="btn btn-danger" onClick={() => submit('decline')} disabled={submitting}>
@@ -325,6 +403,11 @@ function ReviewModal({ txn, onClose, onDecide }) {
             <button className="btn btn-success" onClick={() => submit('approve')} disabled={submitting}>
               {submitting ? '…' : '✅ Approve'}
             </button>
+          </div>
+        )}
+        {(isLocked || done) && (
+          <div className="modal-footer" style={{ justifyContent:'flex-end' }}>
+            <button className="btn btn-ghost" onClick={onClose}>Close</button>
           </div>
         )}
       </div>
@@ -388,7 +471,10 @@ export default function ReviewQueue({ onDecision }) {
                   {transactions.map(txn => {
                     const flags = Array.isArray(txn.risk_flags) ? txn.risk_flags : JSON.parse(txn.risk_flags||'[]');
                     return (
-                      <tr key={txn.transaction_id} onClick={() => setSelected(txn)}>
+                      <tr key={txn.transaction_id}
+                        onClick={() => setSelected(txn)}
+                        style={{ cursor:'pointer' }}
+                        title={FINAL_STATUSES.includes(txn.status) ? 'Click to view details (read-only)' : 'Click to review'}>
                         <td className="monospace" style={{ color:'var(--accent-cyan)', fontSize:'0.72rem' }}>{txn.transaction_id}</td>
                         <td style={{ fontWeight:500, fontSize:'0.82rem' }}>{txn.company_name}</td>
                         <td><span style={{ fontWeight:700, color:'var(--accent-blue)', fontFamily:'monospace' }}>{txn.sec_code}</span></td>
@@ -404,7 +490,11 @@ export default function ReviewQueue({ onDecision }) {
                           {flags.slice(0,2).map(f => <span key={f.rule_code} className={`flag-pill ${f.severity}`} style={{ fontSize:'0.62rem', marginRight:3 }}>{f.rule_code}</span>)}
                           {flags.length>2&&<span style={{ fontSize:'0.65rem', color:'var(--text-muted)' }}>+{flags.length-2}</span>}
                         </td>
-                        <td><span className={`status-badge ${txn.status}`} style={{ fontSize:'0.65rem' }}>{txn.status?.replace('_',' ')}</span></td>
+                        <td>
+                          <span className={`status-badge ${txn.status}`} style={{ fontSize:'0.65rem' }}>
+                            {FINAL_STATUSES.includes(txn.status) ? '🔒 ' : ''}{txn.status?.replace(/_/g,' ')}
+                          </span>
+                        </td>
                         <td style={{ fontSize:'0.72rem' }}>
                           {txn.reviewer_name ? (
                             <span className="reviewer-badge">👤 {txn.reviewer_name}</span>

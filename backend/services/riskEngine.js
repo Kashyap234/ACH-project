@@ -1,4 +1,4 @@
-// backend/services/riskEngine.js — Full NACHA-compliant rule evaluation
+// backend/services/riskEngine.js — Full NACHA-compliant rule evaluation (Firestore async)
 const { queryAll, update } = require('../database/db');
 
 // ── ABA Mod-10 Checksum ─────────────────────────────────────────────────────
@@ -62,10 +62,10 @@ function evaluateRule(rule, txn, ctx = {}) {
 
 // ── Main scoring function ───────────────────────────────────────────────────
 async function scoreTransaction(txn, ctx = {}) {
-  const rules   = queryAll('risk_rules', r => r.is_active);
-  const flags   = [];
-  let   total   = 0;
-  let   maxLvl  = 1;
+  const rules  = await queryAll('risk_rules', r => r.is_active);
+  const flags  = [];
+  let   total  = 0;
+  let   maxLvl = 1;
 
   for (const rule of rules) {
     if (evaluateRule(rule, txn, ctx)) {
@@ -79,14 +79,21 @@ async function scoreTransaction(txn, ctx = {}) {
         weight:      rule.weight,
         severity
       });
-      total += rule.weight * (rule.flag_level * 15);
+      // Weight contributes proportionally: weight(1-3) × level(1-3) × 5 → max ~45 per rule
+      total += rule.weight * rule.flag_level * 5;
       if (rule.flag_level > maxLvl) maxLvl = rule.flag_level;
-      update('risk_rules', r => r.rule_code === rule.rule_code, r => ({ trigger_count: (r.trigger_count || 0) + 1 }));
+      // Fire-and-forget trigger count update (non-blocking)
+      update('risk_rules', r => r.rule_code === rule.rule_code, r => ({ trigger_count: (r.trigger_count || 0) + 1 }))
+        .catch(e => console.warn('[RiskEngine] trigger_count update failed:', e.message));
     }
   }
 
   const riskScore  = Math.min(100, Math.round(total));
-  const riskLevel  = maxLvl === 3 || riskScore >= 70 ? 3 : maxLvl === 2 || riskScore >= 30 ? 2 : 1;
+  // riskLevel is driven primarily by the highest flag level triggered.
+  // Score is only a tiebreaker when maxLvl is already elevated (>=2).
+  const riskLevel  = maxLvl === 3 ? 3
+    : maxLvl === 2 ? (riskScore >= 60 ? 3 : 2)
+    : (riskScore >= 70 ? 3 : riskScore >= 40 ? 2 : 1);
 
   return { riskLevel, riskScore, riskFlags: flags, evaluatedRules: rules.length };
 }

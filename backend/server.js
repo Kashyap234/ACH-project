@@ -47,13 +47,13 @@ app.get('/api/health', (req, res) => res.json({
 app.use((req, res) => res.status(404).json({ success:false, error:`${req.method} ${req.path} not found` }));
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ success:false, error: err.message }); });
 
-function bootstrap() {
+async function bootstrap() {
   console.log('\n═══════════════════════════════════════════════════════════════');
   console.log('  🏦 ACH Payment & Positive Pay AI Triage System v3.0');
   console.log('     Full NACHA · Bulk · Rich Learning · Positive Pay Register');
   console.log('     Account Filters · Exception Dashboard · Reverse Positive Pay');
   console.log('═══════════════════════════════════════════════════════════════');
-  seed();
+  await seed();
   initGemini();
   app.listen(PORT, () => {
     console.log(`\n🚀 API at http://localhost:${PORT}`);

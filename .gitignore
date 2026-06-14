@@ -37,5 +37,22 @@ frontend/build/
 .DS_Store
 Thumbs.db
 
-# Optional: If you want to ignore the local JSON database so you don't commit live data
+# Secrets & Credentials
+backend/firebase-service-account.json
+*.pem
+*.key
+
+# Data & Documents (Don't deploy raw datasets, generated manuals, or slides)
+*.csv
+*.tsv
+*.xlsx
+*.docx
+*.pptx
 backend/database/ach_db.json
+backend/database/*.json
+backend/database/*.sqlite
+backend/database/*.sqlite3
+
+# Test/Demo Scripts (Optional, uncomment if you don't want them tracked)
+# backend/generate_*.js
+# backend/delete_*.js

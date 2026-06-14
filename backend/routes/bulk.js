@@ -1,4 +1,4 @@
-// backend/routes/bulk.js — Bulk upload + batch processing engine
+// backend/routes/bulk.js — Bulk upload + batch processing engine (Firestore async)
 const express = require('express');
 const router  = express.Router();
 const { v4: uuidv4 }  = require('uuid');
@@ -39,7 +39,6 @@ router.post('/upload', async (req, res) => {
       return res.status(400).json({ success: false, error: 'No valid transactions to process', parse_errors: parseErrors });
     }
 
-    // Create a job record
     const jobId = `JOB-${uuidv4().slice(0, 8).toUpperCase()}`;
     const job   = {
       job_id:           jobId,
@@ -58,7 +57,7 @@ router.post('/upload', async (req, res) => {
     };
     jobStore[jobId] = { ...job, rawTxns };
 
-    insert('batch_jobs', {
+    await insert('batch_jobs', {
       job_id: jobId, total: rawTxns.length, batch_size: job.batch_size,
       format, status: 'queued', parse_errors: parseErrors, parse_warnings: parseWarnings
     });
@@ -94,14 +93,15 @@ router.get('/jobs/:jobId', (req, res) => {
 });
 
 // ── GET /api/bulk/jobs — List all jobs ──────────────────────────────────────
-router.get('/jobs', (req, res) => {
-  const jobs = queryAll('batch_jobs', null, { orderBy: 'created_at', desc: true, limit: 20 });
-  // Merge with in-memory for live status
-  const merged = jobs.map(j => {
-    const live = jobStore[j.job_id];
-    return live ? { ...j, ...safeJob(live) } : j;
-  });
-  res.json({ success: true, data: merged });
+router.get('/jobs', async (req, res) => {
+  try {
+    const jobs = await queryAll('batch_jobs', null, { orderBy: 'created_at', desc: true, limit: 20 });
+    const merged = jobs.map(j => {
+      const live = jobStore[j.job_id];
+      return live ? { ...j, ...safeJob(live) } : j;
+    });
+    res.json({ success: true, data: merged });
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // ── Core batch processor ─────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ async function processBatch(jobId) {
   }
   job.status = 'running';
   job.started_at = new Date().toISOString();
-  update('batch_jobs', j => j.job_id === jobId, () => ({ status: 'running', started_at: job.started_at }));
+  await update('batch_jobs', j => j.job_id === jobId, () => ({ status: 'running', started_at: job.started_at }));
 
   const { rawTxns, batch_size } = job;
   const batches = [];
@@ -131,7 +131,6 @@ async function processBatch(jobId) {
       try {
         const txn = normalizeTxn(raw);
 
-        // Validate critical fields before AI processing
         if (!txn.amount || txn.amount <= 0) {
           throw new Error(`Invalid or zero amount for record: ${txn.company_name || txn.transaction_id}`);
         }
@@ -140,7 +139,7 @@ async function processBatch(jobId) {
         }
 
         const riskResult = await scoreTransaction(txn);
-        const match = checkPatternMatch(txn, riskResult.riskFlags);
+        const match = await checkPatternMatch(txn, riskResult.riskFlags);
         let effectiveLevel = riskResult.riskLevel;
         if (match && riskResult.riskLevel > 1) effectiveLevel = 1;
 
@@ -157,14 +156,14 @@ async function processBatch(jobId) {
           job.flagged++;
         }
 
-        const saved = insert('transactions', {
+        await insert('transactions', {
           ...txn, risk_level: effectiveLevel, risk_score: riskResult.riskScore,
           risk_flags: riskResult.riskFlags, ai_brief: aiBrief,
           compliance_notes: complianceNotes, ai_recommendation: aiRecommendation,
           ai_confidence: aiConfidence, status
         });
 
-        insert('audit_logs', {
+        await insert('audit_logs', {
           transaction_id: txn.transaction_id,
           event_type:     effectiveLevel === 1 ? 'auto_approved' : 'ai_processed',
           event_summary:  `[BULK ${jobId}] ${effectiveLevel === 1 ? 'Auto-approved' : `Level ${effectiveLevel} flagged`}: ${txn.company_name} $${txn.amount}`,
@@ -183,13 +182,12 @@ async function processBatch(jobId) {
       }
     }
 
-    // Small delay between batches to avoid hammering AI
     if (bIdx < batches.length - 1) await sleep(300);
   }
 
   job.status        = 'completed';
   job.completed_at  = new Date().toISOString();
-  update('batch_jobs', j => j.job_id === jobId, () => ({
+  await update('batch_jobs', j => j.job_id === jobId, () => ({
     status: 'completed', completed_at: job.completed_at,
     processed: job.processed, auto_approved: job.auto_approved,
     flagged: job.flagged, errors: job.errors
@@ -241,7 +239,6 @@ function normalizeTxn(raw) {
     payee_name:                  raw.payee_name || null,
     issued_check_amount:         raw.issued_check_amount || null,
     issued_check_date:           raw.issued_check_date || null,
-    // IAT
     iso_destination_country_code: raw.iso_destination_country_code || null,
     originator_street:           raw.originator_street || null,
     originator_city:             raw.originator_city || null,
