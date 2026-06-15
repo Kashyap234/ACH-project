@@ -364,16 +364,25 @@ router.post('/message', optionalAuth, async (req, res) => {
         is_active: true, last_login: null, created_by: user.username,
       });
 
+      const { sendWelcomeEmail } = require('./auth');
+      const emailResult = await sendWelcomeEmail({
+        to: email, full_name, username: username.trim(), password: plainPassword, role
+      });
+
       await insert('audit_logs', {
         transaction_id: null, event_type: 'user_created',
         event_summary: `[CHATBOT] User created by ${user.username}: ${full_name} (${username}) — Role: ${role}`,
-        event_data: { user_id, role, created_by: user.username },
+        event_data: { user_id, role, created_by: user.username, email_sent: emailResult?.sent },
         actor: user.username, severity: 'info'
       });
 
+      let emailStatusMsg = emailResult?.sent 
+        ? `\n\n📧 An email with login instructions has been sent to **${email}**.` 
+        : `\n\n⚠️ Could not send welcome email (SMTP may not be configured). Please share these credentials securely.`;
+
       return res.json({
         success: true,
-        reply: `✅ I've successfully created the new user account for you.\n\n**User Details:**\n* **Username:** ${username}\n* **Email:** ${email}\n* **Role:** ${role}\n* **Temporary Password:** \`${plainPassword}\`\n\nPlease share these credentials securely.`,
+        reply: `✅ I've successfully created the new user account for you.\n\n**User Details:**\n* **Username:** ${username}\n* **Email:** ${email}\n* **Role:** ${role}\n* **Temporary Password:** \`${plainPassword}\`${emailStatusMsg}`,
         source: 'system'
       });
     }

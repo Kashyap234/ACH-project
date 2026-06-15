@@ -324,4 +324,4 @@ router.post('/change-password', authenticate, async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = Object.assign(router, { sendWelcomeEmail });
