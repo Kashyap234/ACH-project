@@ -1,4 +1,8 @@
 // backend/routes/auth.js — Admin-managed user creation with email notification (Firestore async)
+const dns = require('dns');
+// Force Node.js to prioritize IPv4 globally, fixing Render's IPv6 ENETUNREACH issues
+if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
+
 const express  = require('express');
 const router   = express.Router();
 const bcrypt   = require('bcryptjs');
