@@ -67,6 +67,18 @@ async function bootstrap() {
     console.log(`📋 Exceptions: http://localhost:${PORT}/api/exceptions`);
     console.log(`🏦 Accounts:   http://localhost:${PORT}/api/accounts`);
     console.log('═══════════════════════════════════════════════════════════════\n');
+
+    // Self-ping to prevent Render from sleeping on the free tier (every 2.5 minutes)
+    const renderUrl = process.env.RENDER_EXTERNAL_URL;
+    if (renderUrl) {
+      console.log(`[Heartbeat] Started self-ping for ${renderUrl} every 2.5 mins`);
+      setInterval(() => {
+        const httpLib = renderUrl.startsWith('https') ? require('https') : require('http');
+        httpLib.get(`${renderUrl}/api/health`).on('error', (err) => {
+          console.error('[Heartbeat] Self-ping failed:', err.message);
+        });
+      }, 150000); // 150,000 ms = 2.5 minutes
+    }
   });
 }
 
