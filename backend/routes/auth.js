@@ -41,23 +41,27 @@ async function sendWelcomeEmail({ to, full_name, username, password, role }) {
     'This is an automated message from the ACH Triage AI System v3.0.',
   ].join('\n');
 
-  const smtpHost = process.env.SMTP_HOST;
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
-  const fromAddr = process.env.SMTP_FROM || smtpUser;
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const fromAddr = process.env.RESEND_FROM || 'onboarding@resend.dev'; // Resend's default testing address
 
-  if (smtpHost && smtpUser && smtpPass) {
+  if (resendApiKey) {
     try {
-      const nodemailer = require('nodemailer');
-      const transporter = nodemailer.createTransport({
-        host: smtpHost,
-        port: parseInt(process.env.SMTP_PORT || '587'),
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: { user: smtpUser, pass: smtpPass },
-        family: 4 // Force IPv4 to prevent ENETUNREACH errors on platforms like Render
+      const { Resend } = require('resend');
+      const resend = new Resend(resendApiKey);
+
+      const { data, error } = await resend.emails.send({
+        from: fromAddr,
+        to: to,
+        subject: subject,
+        text: body
       });
-      await transporter.sendMail({ from: fromAddr, to, subject, text: body });
-      console.log('[Auth] ✅ Welcome email sent to:', to);
+
+      if (error) {
+        console.warn('[Auth] ⚠️  Email send failed:', error.message);
+        return { sent: false, error: error.message };
+      }
+
+      console.log('[Auth] ✅ Welcome email sent to:', to, 'ID:', data?.id);
       return { sent: true };
     } catch (e) {
       console.warn('[Auth] ⚠️  Email send failed:', e.message);
