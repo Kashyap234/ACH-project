@@ -50,6 +50,7 @@ async function sendWelcomeEmail({ to, full_name, username, password, role }) {
         port: parseInt(process.env.SMTP_PORT || '587'),
         secure: process.env.SMTP_SECURE === 'true',
         auth: { user: smtpUser, pass: smtpPass },
+        family: 4 // Force IPv4 to prevent ENETUNREACH errors on platforms like Render
       });
       await transporter.sendMail({ from: fromAddr, to, subject, text: body });
       console.log('[Auth] ✅ Welcome email sent to:', to);
