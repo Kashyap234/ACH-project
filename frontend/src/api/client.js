@@ -1,7 +1,7 @@
 // frontend/src/api/client.js
 import axios from 'axios';
 
-const API = axios.create({ baseURL: 'http://localhost:3001/api', timeout: 60000 });
+const API = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api', timeout: 60000 });
 
 // Attach JWT token from localStorage to every request
 API.interceptors.request.use(c => {
