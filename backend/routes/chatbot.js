@@ -108,6 +108,25 @@ function detectDecisionIntent(message) {
   return null;
 }
 
+// ── Detect user creation intent ──────────────────────────────────────────────
+function detectUserCreationIntent(message) {
+  const m = message.toLowerCase();
+  const createMatch = /\b(create|add|new|make)\s+(a\s+)?(user|account)\b/i.test(m);
+  if (!createMatch) return null;
+
+  const emailMatch = m.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/);
+  if (!emailMatch) return null;
+
+  let role = 'reviewer';
+  if (m.includes('admin')) role = 'admin';
+  else if (m.includes('supervisor')) role = 'supervisor';
+  else if (m.includes('analyst')) role = 'analyst';
+
+  const email = emailMatch[1];
+  const username = email.split('@')[0];
+  return { email, role, username, full_name: username };
+}
+
 // ── Format transaction detail string for LLM context (ASYNC) ─────────────────
 async function txnDetailForContext(t) {
   if (!t) return null;
@@ -314,6 +333,47 @@ router.post('/message', optionalAuth, async (req, res) => {
       return res.json({
         success: true,
         reply: 'Which transaction would you like to **' + action + '**? Here are the ones currently under review:\n\n' + list + '\n\nJust reply with the transaction ID, e.g. *"' + action + ' ' + pendingSlice[0].transaction_id + '"*',
+        source: 'system'
+      });
+    }
+
+    // ── Step 1.5: Detect user creation intent (requires admin) ────────────
+    const userIntent = detectUserCreationIntent(message);
+    if (userIntent) {
+      if (!user) {
+        return res.json({ success: true, reply: '🔒 **Authentication required** to create users. Please log in first.', source: 'system' });
+      }
+      if (user.role !== 'admin') {
+        return res.json({ success: true, reply: '🔒 **Admin access required** to create users. Your role is: ' + user.role + '.', source: 'system' });
+      }
+
+      const { email, role, username, full_name } = userIntent;
+      const existing = await queryOne('users', u => u.email.toLowerCase() === email.toLowerCase() || u.username.toLowerCase() === username.toLowerCase());
+      
+      if (existing) {
+        return res.json({ success: true, reply: `A user with the email or username **${email}** already exists.`, source: 'system' });
+      }
+
+      const bcrypt = require('bcryptjs');
+      const plainPassword = Math.random().toString(36).slice(-8) + 'A1!';
+      const password_hash = await bcrypt.hash(plainPassword, 12);
+      const user_id = 'USR-' + uuidv4().slice(0, 8).toUpperCase();
+
+      await insert('users', {
+        user_id, username, full_name, email, password_hash, role,
+        is_active: true, last_login: null, created_by: user.username,
+      });
+
+      await insert('audit_logs', {
+        transaction_id: null, event_type: 'user_created',
+        event_summary: `[CHATBOT] User created by ${user.username}: ${full_name} (${username}) — Role: ${role}`,
+        event_data: { user_id, role, created_by: user.username },
+        actor: user.username, severity: 'info'
+      });
+
+      return res.json({
+        success: true,
+        reply: `✅ I've successfully created the new user account for you.\n\n**User Details:**\n* **Username:** ${username}\n* **Email:** ${email}\n* **Role:** ${role}\n* **Temporary Password:** \`${plainPassword}\`\n\nPlease share these credentials securely.`,
         source: 'system'
       });
     }
