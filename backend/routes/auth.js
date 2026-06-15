@@ -3,10 +3,10 @@ const dns = require('dns');
 // Force Node.js to prioritize IPv4 globally, fixing Render's IPv6 ENETUNREACH issues
 if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 
-const express  = require('express');
-const router   = express.Router();
-const bcrypt   = require('bcryptjs');
-const jwt      = require('jsonwebtoken');
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { insert, queryOne, queryAll, update, remove } = require('../database/db');
 const { authenticate, JWT_SECRET } = require('../middleware/auth');
@@ -23,9 +23,9 @@ function signToken(user) {
 
 // ── Email sender (uses nodemailer if configured, otherwise logs to console) ───
 async function sendWelcomeEmail({ to, full_name, username, password, role }) {
-  const roleLabel = { admin:'Administrator', supervisor:'Supervisor', analyst:'Analyst', reviewer:'Reviewer' }[role] || role;
-  const subject   = 'Your ACH Triage AI System Account Has Been Created';
-  const body      = [
+  const roleLabel = { admin: 'Administrator', supervisor: 'Supervisor', analyst: 'Analyst', reviewer: 'Reviewer' }[role] || role;
+  const subject = 'Your ACH Triage AI System Account Has Been Created';
+  const body = [
     'Hello ' + full_name + ',',
     '',
     'An administrator has created an account for you on the ACH Payment & Positive Pay AI Triage System.',
@@ -34,7 +34,7 @@ async function sendWelcomeEmail({ to, full_name, username, password, role }) {
     '  Username : ' + username,
     '  Password : ' + password,
     '  Role     : ' + roleLabel,
-    '  Login URL: http://localhost:5173/login',
+    '  Login URL: https://ach-triage-frontend.onrender.com/login',
     '',
     'Please log in and change your password as soon as possible.',
     '',
@@ -203,7 +203,7 @@ router.get('/users', authenticate, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Admin access required.' });
     }
     const users = await queryAll('users', null, { orderBy: 'created_at', desc: true });
-    const safe  = users.map(({ password_hash, ...u }) => u);
+    const safe = users.map(({ password_hash, ...u }) => u);
     res.json({ success: true, data: safe, total: safe.length });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
@@ -226,9 +226,9 @@ router.patch('/users/:user_id', authenticate, async (req, res) => {
     }
 
     const allowed = {};
-    if (req.body.role       !== undefined && ROLES.includes(req.body.role)) allowed.role       = req.body.role;
-    if (req.body.is_active  !== undefined) allowed.is_active  = Boolean(req.body.is_active);
-    if (req.body.full_name  !== undefined) allowed.full_name  = req.body.full_name;
+    if (req.body.role !== undefined && ROLES.includes(req.body.role)) allowed.role = req.body.role;
+    if (req.body.is_active !== undefined) allowed.is_active = Boolean(req.body.is_active);
+    if (req.body.full_name !== undefined) allowed.full_name = req.body.full_name;
 
     if (req.body.reset_password) {
       const newPass = generatePassword();
