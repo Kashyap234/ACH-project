@@ -123,6 +123,9 @@ async function processBatch(jobId) {
     batches.push(rawTxns.slice(i, i + batch_size));
   }
 
+  const batchTraceNumbers = new Set();
+  const batchCompanyCounts = {};
+
   for (let bIdx = 0; bIdx < batches.length; bIdx++) {
     const batch = batches[bIdx];
     console.log(`[Bulk] Job ${jobId} — Processing batch ${bIdx + 1}/${batches.length} (${batch.length} txns)`);
@@ -138,7 +141,26 @@ async function processBatch(jobId) {
           txn.company_name = txn.individual_name || txn.company_id || 'Unknown';
         }
 
-        const riskResult = await scoreTransaction(txn);
+        const isDbDuplicate = txn.trace_number ? !!(await queryOne('transactions', t => t.trace_number === txn.trace_number)) : false;
+        const duplicate_trace = isDbDuplicate || batchTraceNumbers.has(txn.trace_number);
+        if (txn.trace_number) batchTraceNumbers.add(txn.trace_number);
+        
+        const todayStr = new Date().toISOString().split('T')[0];
+        const dbCount = (await queryAll('transactions', t => t.company_id === txn.company_id && t.effective_date === todayStr)).length;
+        batchCompanyCounts[txn.company_id] = (batchCompanyCounts[txn.company_id] || 0) + 1;
+        const company_daily_count = dbCount + batchCompanyCounts[txn.company_id];
+        
+        const check_stale = txn.issued_check_date ? (new Date() - new Date(txn.issued_check_date)) > 90 * 24 * 60 * 60 * 1000 : false;
+        
+        const ctx = { 
+          duplicate_trace, 
+          company_daily_count, 
+          check_stale,
+          ach_block_active: txn.ach_block_active || false,
+          rdfi_trace_mismatch: txn.rdfi_trace_mismatch || false,
+          new_originator: txn.new_originator || false
+        };
+        const riskResult = await scoreTransaction(txn, ctx);
         const match = await checkPatternMatch(txn, riskResult.riskFlags);
         let effectiveLevel = riskResult.riskLevel;
         if (match && riskResult.riskLevel > 1) effectiveLevel = 1;

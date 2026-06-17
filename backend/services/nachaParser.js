@@ -212,6 +212,12 @@ function parseCsvTransactions(csvText) {
         originator_country:  row.originator_country || null,
         receiver_country:    row.receiver_country || null,
         foreign_exchange_indicator: row.fx_indicator || null,
+
+        // Advanced Risk Context fields
+        positive_pay_mismatch: row.positive_pay_mismatch === 'true' || row.positive_pay_mismatch === '1',
+        ach_block_active:      row.ach_block_active === 'true' || row.ach_block_active === '1',
+        rdfi_trace_mismatch:   row.rdfi_trace_mismatch === 'true' || row.rdfi_trace_mismatch === '1',
+        new_originator:        row.new_originator === 'true' || row.new_originator === '1',
       };
       transactions.push(txn);
     } catch (e) {

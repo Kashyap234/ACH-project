@@ -122,8 +122,16 @@ router.post('/', async (req, res) => {
       authorized_company_ids:     body.authorized_company_ids || [],
       originator: 'API',
     };
-
-    const riskResult = await scoreTransaction(txn);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const dbCount = (await queryAll('transactions', t => t.company_id === txn.company_id && t.effective_date === todayStr)).length;
+    const isDbDuplicate = txn.trace_number ? !!(await queryOne('transactions', t => t.trace_number === txn.trace_number)) : false;
+    const check_stale = txn.issued_check_date ? (new Date() - new Date(txn.issued_check_date)) > 90 * 24 * 60 * 60 * 1000 : false;
+    const ctx = {
+      company_daily_count: dbCount + 1,
+      duplicate_trace: isDbDuplicate,
+      check_stale
+    };
+    const riskResult = await scoreTransaction(txn, ctx);
     const match = await checkPatternMatch(txn, riskResult.riskFlags);
     let effectiveLevel = riskResult.riskLevel;
     let patternNote    = null;
