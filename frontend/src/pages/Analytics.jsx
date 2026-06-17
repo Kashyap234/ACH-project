@@ -196,7 +196,7 @@ export default function Analytics() {
       <div className="stats-grid" style={{ marginBottom:24 }}>
         {[
           { label:'Auto-Resolution Rate', value:`${autoRate}%`, icon:'🤖', color:'var(--accent-green)', sub:'Zero-touch transactions' },
-          { label:'Human Reviews Required', value: d?.totals?.pending + (d?.totals?.approved||0) + (d?.totals?.declined||0), icon:'👤', color:'var(--accent-yellow)', sub:'Level 2 & 3 transactions' },
+          { label:'Human Reviews Required', value: d?.totals?.pending || 0, icon:'👤', color:'var(--accent-yellow)', sub:'Pending Level 2 & 3 transactions' },
           { label:'AI Patterns Learned', value: d?.learning?.totalPatterns || 0, icon:'🧠', color:'var(--accent-purple)', sub:'Unique risk profiles' },
           { label:'Patterns Promoted', value: d?.learning?.promotedPatterns || 0, icon:'🚀', color:'var(--accent-cyan)', sub:'Now auto-approved' },
         ].map(({ label, value, icon, color, sub }) => (
