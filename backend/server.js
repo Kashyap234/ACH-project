@@ -12,6 +12,7 @@ const accountsRouter        = require('./routes/accounts');
 const positivePayRouter     = require('./routes/positivePayRegister');
 const exceptionsRouter      = require('./routes/exceptions');
 const chatbotRouter         = require('./routes/chatbot');
+const infoRequestsRouter    = require('./routes/infoRequests');    // MIR + autonomous workflow
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -34,6 +35,14 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// MIR routes mounted BEFORE transactionsRouter — specific paths must win over /:id catch-all
+// POST /api/transactions/:id/request-info
+// GET  /api/transactions/:id/info-requests
+// POST /api/transactions/:id/override-ai
+// GET  /api/portal/:token
+// POST /api/portal/:token/respond
+app.use('/api',              infoRequestsRouter);
 
 app.use('/api/auth',         authRouter);
 app.use('/api/transactions',   transactionsRouter);
