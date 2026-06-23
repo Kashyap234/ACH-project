@@ -4,8 +4,8 @@ const router  = express.Router();
 const { v4: uuidv4 }  = require('uuid');
 const { queryAll, queryOne, insert, update } = require('../database/db');
 const { scoreTransaction }    = require('../services/riskEngine');
-const { generateComplianceNotes, generateReviewBrief } = require('../services/aiTriage');
-const { recordDecision, checkPatternMatch } = require('../services/learningPipeline');
+const { generateComplianceNotes, generateReviewBrief, regenerateBriefForOperation } = require('../services/aiTriage');
+const { recordDecision, checkPatternMatch, startLifecycle, runAutonomousWorkflow } = require('../services/learningPipeline');
 const { authenticate } = require('../middleware/auth');
 
 // ── GET /api/transactions ────────────────────────────────────────────────────
@@ -143,12 +143,26 @@ router.post('/', async (req, res) => {
     let complianceNotes = null, aiBrief = null, aiRecommendation = null, aiConfidence = null;
     let status = 'pending';
 
-    if (effectiveLevel === 1) {
+    // ── Decide processing path ─────────────────────────────────────────────
+    // Level 1 with no MIR history → simple auto-approve (existing behaviour)
+    // Level 1 with workflow_playbook → autonomous MIR workflow
+    // Level 2/3 → human review queue
+    const hasWorkflowPlaybook = match && match.workflow_playbook;
+
+    if (effectiveLevel === 1 && !hasWorkflowPlaybook) {
+      // Simple zero-touch auto-approve
       complianceNotes = await generateComplianceNotes(txn, riskResult);
       if (patternNote) complianceNotes = `### ${patternNote}\n\n---\n\n${complianceNotes}`;
-      aiBrief = complianceNotes; // Also set ai_brief so the ReviewQueue modal can always display it
+      aiBrief = complianceNotes;
       status = 'auto_approved';
+    } else if (effectiveLevel === 1 && hasWorkflowPlaybook) {
+      // Autonomous workflow — AI will handle MIR rounds and final decision
+      // Status starts as 'ai_workflow', runAutonomousWorkflow fires asynchronously
+      const brief = await generateReviewBrief(txn, riskResult);
+      aiBrief = brief.brief; aiRecommendation = brief.recommendation; aiConfidence = brief.confidence;
+      status = 'ai_workflow';
     } else {
+      // Human review required
       const brief = await generateReviewBrief(txn, riskResult);
       aiBrief = brief.brief; aiRecommendation = brief.recommendation; aiConfidence = brief.confidence;
       status = 'under_review';
@@ -158,16 +172,38 @@ router.post('/', async (req, res) => {
       ...txn, risk_level: effectiveLevel, risk_score: riskResult.riskScore,
       risk_flags: riskResult.riskFlags, ai_brief: aiBrief,
       compliance_notes: complianceNotes, ai_recommendation: aiRecommendation,
-      ai_confidence: aiConfidence, status
+      ai_confidence: aiConfidence, status,
+      ai_workflow_pattern: match?.pattern_hash || null,
+      ai_human_override:   false,
+      resubmission_count:  0,
+      info_request_rounds: 0,
     });
 
     await insert('audit_logs', { transaction_id, event_type: 'transaction_created', event_summary: `Ingested: ${txn.sec_code} $${parseFloat(body.amount).toLocaleString()} from ${txn.company_name}`, event_data: { risk_level: effectiveLevel, risk_score: riskResult.riskScore, flags: riskResult.riskFlags.length, sec_code: txn.sec_code }, actor: 'SYSTEM', severity: 'info' });
-    await insert('audit_logs', { transaction_id, event_type: effectiveLevel === 1 ? 'auto_approved' : 'ai_processed', event_summary: effectiveLevel === 1 ? `Auto-approved (Score: ${riskResult.riskScore}/100)` : `AI brief ready — Level ${effectiveLevel} human review required`, event_data: { ai_recommendation: aiRecommendation, ai_confidence: aiConfidence }, actor: 'AI', severity: 'info' });
+
+    if (status === 'auto_approved') {
+      await insert('audit_logs', { transaction_id, event_type: 'auto_approved', event_summary: `Auto-approved (Score: ${riskResult.riskScore}/100)`, event_data: { ai_recommendation: aiRecommendation, ai_confidence: aiConfidence }, actor: 'AI', severity: 'info' });
+    } else if (status === 'ai_workflow') {
+      // Start lifecycle and fire autonomous workflow asynchronously
+      await insert('audit_logs', { transaction_id, event_type: 'ai_workflow_queued', event_summary: `🤖 AI autonomous workflow queued (Pattern: ${match.pattern_hash})`, event_data: { pattern_hash: match.pattern_hash, confidence: match.confidence_score }, actor: 'AI', severity: 'info' });
+      // Non-blocking — responds to caller immediately
+      runAutonomousWorkflow(saved, riskResult, match).catch(e => {
+        console.error(`[AI_AUTOMATION] runAutonomousWorkflow error for ${transaction_id}:`, e.message);
+      });
+    } else {
+      // under_review — start lifecycle for human workflow tracking
+      startLifecycle(saved, riskResult).catch(console.error);
+      await insert('audit_logs', { transaction_id, event_type: 'ai_processed', event_summary: `AI brief ready — Level ${effectiveLevel} human review required`, event_data: { ai_recommendation: aiRecommendation, ai_confidence: aiConfidence }, actor: 'AI', severity: 'info' });
+    }
 
     res.status(201).json({
       success: true,
-      message: effectiveLevel === 1 ? '✅ Auto-approved by AI (Level 1 — Zero Touch)' : `⚠️ Level ${effectiveLevel} — AI brief ready for review`,
-      data:    saved
+      message: status === 'auto_approved'
+        ? '✅ Auto-approved by AI (Level 1 — Zero Touch)'
+        : status === 'ai_workflow'
+          ? '🤖 AI autonomous workflow started — originator will be contacted for information'
+          : `⚠️ Level ${effectiveLevel} — AI brief ready for review`,
+      data: saved
     });
   } catch (e) {
     console.error('[POST /transactions]', e);
@@ -183,7 +219,8 @@ router.post('/:id/decision', authenticate, async (req, res) => {
 
     const txn = await queryOne('transactions', t => t.transaction_id === req.params.id);
     if (!txn) return res.status(404).json({ success: false, error: 'Not found' });
-    if (txn.status !== 'under_review') return res.status(409).json({ success: false, error: `Already in status: ${txn.status}` });
+    if (!['under_review','more_info_required','ai_workflow'].includes(txn.status))
+      return res.status(409).json({ success: false, error: `Already in status: ${txn.status}` });
 
     const reviewer  = req.user;
     const newStatus = decision === 'approve' ? 'approved' : 'declined';
@@ -202,6 +239,32 @@ router.post('/:id/decision', authenticate, async (req, res) => {
 
     const riskResult = { riskLevel: txn.risk_level, riskScore: txn.risk_score, riskFlags: txn.risk_flags || [] };
     recordDecision(txn, decision, reviewData, riskResult).catch(console.error);
+
+    // Regenerate AI brief in background with company-wide context and decision outcome
+    ;(async () => {
+      try {
+        const [companyTransactions, infoRequests] = await Promise.all([
+          queryAll('transactions', t => t.company_id === txn.company_id),
+          queryAll('info_requests', r => r.transaction_id === txn.transaction_id, { orderBy: 'created_at', desc: false }),
+        ]);
+        const newBrief = await regenerateBriefForOperation(
+          txn, riskResult,
+          decision === 'approve' ? 'approved' : 'declined',
+          {
+            companyTransactions,
+            infoRequests,
+            operationDetails: {
+              reviewer_name: reviewer.full_name,
+              reason: reviewData.additional_notes || reviewData.decision_reason || null,
+              return_code: decision === 'decline' ? (reviewData.recommended_return_code || null) : null,
+            },
+          }
+        );
+        await update('transactions', t => t.transaction_id === txn.transaction_id, () => ({ ai_brief: newBrief }));
+      } catch (e) {
+        console.error('[AI_BRIEF] Brief regeneration failed after decision:', e.message);
+      }
+    })();
 
     await insert('audit_logs', {
       transaction_id: txn.transaction_id,

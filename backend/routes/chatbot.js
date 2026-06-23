@@ -127,6 +127,26 @@ function detectUserCreationIntent(message) {
   return { email, role, username, full_name: username };
 }
 
+function detectUserListIntent(msg) {
+  return /\b(list|show|get|display|who are|all)\s+(all\s+)?(users?|team|staff|members?|roles?)\b/i.test(msg) ||
+         /\b(user|team)\s+(list|roster|overview|management)\b/i.test(msg);
+}
+
+function detectExceptionsIntent(msg) {
+  return /\b(exceptions?|cutoff|past.?due|overdue|deadline)\b/i.test(msg) &&
+         /\b(list|show|what|which|pending|due|status|check)\b/i.test(msg);
+}
+
+function detectMirOverviewIntent(msg) {
+  return /\b(more.?info|mir\b|info.?request|additional.?info|information.?request|sla)\b/i.test(msg) &&
+         /\b(pending|status|show|list|overview|overdue|expired|waiting)\b/i.test(msg);
+}
+
+function detectAccountsIntent(msg) {
+  return /\b(accounts?|filter.?mode|whitelist|debit.?block|cutoff.?time)\b/i.test(msg) &&
+         /\b(show|list|status|what|view|display|tell|get|configure|config)\b/i.test(msg);
+}
+
 // ── Format transaction detail string for LLM context (ASYNC) ─────────────────
 async function txnDetailForContext(t) {
   if (!t) return null;
@@ -175,11 +195,14 @@ async function buildLiveContext() {
   const todayCount = allTxns.filter(t => t.created_at?.startsWith(todayStr)).length;
   const autoRate   = total > 0 ? Math.round((autoApproved / total) * 100) : 0;
 
-  const [learning, accounts, auditLogs] = await Promise.all([
+  const [learning, accounts, auditLogs, allUsers, mirPending] = await Promise.all([
     getLearningStats(),
     queryAll('accounts'),
     queryAll('audit_logs', null, { orderBy: 'created_at', desc: true, limit: 10 }),
+    queryAll('users'),
+    queryAll('info_requests', r => r.status === 'pending').catch(() => []),
   ]);
+  const mirOverdue = (Array.isArray(mirPending) ? mirPending : []).filter(r => r.sla_deadline_at && new Date(r.sla_deadline_at) < new Date()).length;
 
   const recentTxns  = allTxns.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
   const l3Txns      = allTxns.filter(t => t.risk_level === 3);
@@ -210,7 +233,14 @@ async function buildLiveContext() {
     'Top Fraud Indicators: ' + ((learning.topFraudIndicators || []).map(f => f.indicator + '(' + f.count + 'x)').join(', ') || 'None'),
     '',
     '## ACCOUNTS',
-    (Array.isArray(accounts) ? accounts : []).map(a => a.account_name + ': Filter=' + a.filter_mode + ', Default=' + a.default_action).join('\n') || 'None',
+    (Array.isArray(accounts) ? accounts : []).map(a => a.account_name + ' (' + a.account_id + '): Filter=' + a.filter_mode + ', Cutoff=' + (a.cutoff_time || 'N/A') + ', Default=' + a.default_action + ', DebitBlock=' + (a.debit_block ? 'Yes' : 'No') + (a.max_daily_debit ? ', MaxDaily=$' + a.max_daily_debit : '')).join('\n') || 'None',
+    '',
+    '## SYSTEM USERS (' + (Array.isArray(allUsers) ? allUsers.length : 0) + ' total)',
+    (Array.isArray(allUsers) ? allUsers : []).map(u => u.username + ' | ' + u.role + ' | ' + u.full_name + ' | ' + (u.is_active ? 'active' : 'DISABLED') + ' | LastLogin:' + (u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never')).join('\n') || 'None',
+    '',
+    '## MIR (MORE INFO REQUIRED) STATUS',
+    'Pending MIR Requests: ' + (Array.isArray(mirPending) ? mirPending : []).length + ' | Overdue (past SLA): ' + mirOverdue,
+    (Array.isArray(mirPending) && mirPending.length > 0 ? 'MIR Items: ' + mirPending.slice(0, 10).map(r => r.transaction_id + '[Round ' + r.round_number + ',' + r.category + ']').join(' | ') : ''),
     '',
     '## ALL TRANSACTION INDEX (ID | Company | Amount | Status | Risk | Score | SEC | Date)',
     txnIndex || '(No transactions)',
@@ -385,6 +415,72 @@ router.post('/message', optionalAuth, async (req, res) => {
         reply: `✅ I've successfully created the new user account for you.\n\n**User Details:**\n* **Username:** ${username}\n* **Email:** ${email}\n* **Role:** ${role}\n* **Temporary Password:** \`${plainPassword}\`${emailStatusMsg}`,
         source: 'system'
       });
+    }
+
+    // ── Step 1.6: User list intent ─────────────────────────────────────────
+    if (detectUserListIntent(message) && user) {
+      const users = await queryAll('users');
+      const byRole = {};
+      users.forEach(u => { byRole[u.role] = (byRole[u.role] || 0) + 1; });
+      const roleStr = Object.entries(byRole).map(([r, c]) => c + ' ' + r + (c > 1 ? 's' : '')).join(', ');
+      const list = users.map(u =>
+        '• **' + u.username + '** (' + u.full_name + ') — ' + u.role +
+        (u.is_active ? '' : ' 🔴 *disabled*') +
+        (u.last_login ? ' · last login ' + new Date(u.last_login).toLocaleDateString() : ' · never logged in')
+      ).join('\n');
+      return res.json({ success: true, source: 'system', reply: '👥 **System Users** — ' + users.length + ' total (' + roleStr + '):\n\n' + list });
+    }
+
+    // ── Step 1.7: Exceptions intent ────────────────────────────────────────
+    if (detectExceptionsIntent(message)) {
+      const [excAccounts, underReview] = await Promise.all([queryAll('accounts'), queryAll('transactions', t => t.status === 'under_review')]);
+      const acct = excAccounts[0];
+      if (!acct || !underReview.length) return res.json({ success: true, source: 'system', reply: '✅ No pending exceptions. All under-review transactions are within their cutoff windows.' });
+      const fmtMs = ms => { const h = Math.floor(ms/3600000), m = Math.floor((ms%3600000)/60000); return h > 0 ? h+'h '+m+'m' : m+'m'; };
+      const withDeadline = underReview.map(txn => {
+        const created = new Date(txn.created_at);
+        const [hh, mm] = (acct.cutoff_time || '14:00').split(':').map(Number);
+        const cutoff = new Date(created); cutoff.setHours(hh, mm, 0, 0);
+        if (created > cutoff) cutoff.setDate(cutoff.getDate() + 1);
+        const msLeft = cutoff - new Date();
+        return { ...txn, ms_remaining: msLeft, is_past_due: msLeft < 0 };
+      });
+      const pastDue = withDeadline.filter(e => e.is_past_due);
+      const urgent  = withDeadline.filter(e => !e.is_past_due && e.ms_remaining < 3600000);
+      const safe    = withDeadline.filter(e => !e.is_past_due && e.ms_remaining >= 3600000);
+      let reply = '⏰ **Exception Dashboard** — ' + withDeadline.length + ' pending (cutoff: ' + acct.cutoff_time + ', default: ' + acct.default_action + '):\n\n';
+      if (pastDue.length) reply += '🔴 **Past Due (' + pastDue.length + '):**\n' + pastDue.map(e => '• **' + e.transaction_id + '** — ' + e.company_name + ' $' + Number(e.amount).toLocaleString() + ' L' + e.risk_level).join('\n') + '\n\n';
+      if (urgent.length) reply += '🟡 **Urgent (<1 hr, ' + urgent.length + '):**\n' + urgent.map(e => '• **' + e.transaction_id + '** — ' + e.company_name + ' $' + Number(e.amount).toLocaleString() + ' · ' + fmtMs(e.ms_remaining) + ' left').join('\n') + '\n\n';
+      if (safe.length) reply += '🟢 **Safe (' + safe.length + '):**\n' + safe.map(e => '• **' + e.transaction_id + '** — ' + e.company_name + ' · ' + fmtMs(e.ms_remaining) + ' left').join('\n');
+      return res.json({ success: true, source: 'system', reply: reply.trim() });
+    }
+
+    // ── Step 1.8: MIR overview intent ──────────────────────────────────────
+    if (detectMirOverviewIntent(message)) {
+      const mirAll = await queryAll('info_requests').catch(() => []);
+      const pending = mirAll.filter(r => r.status === 'pending');
+      const overdue = pending.filter(r => r.sla_deadline_at && new Date(r.sla_deadline_at) < new Date());
+      if (!pending.length) return res.json({ success: true, source: 'system', reply: '✅ No pending More Info Required requests. All MIR items have been responded to.' });
+      let reply = '📨 **MIR Status** — ' + pending.length + ' pending, ' + overdue.length + ' overdue:\n\n';
+      reply += pending.map(r => {
+        const od = r.sla_deadline_at && new Date(r.sla_deadline_at) < new Date() ? ' 🔴 **OVERDUE**' : '';
+        return '• **' + r.transaction_id + '** — Round ' + r.round_number + ' | ' + r.category.replace(/_/g, ' ') + ' | by ' + r.actor_type + od;
+      }).join('\n');
+      return res.json({ success: true, source: 'system', reply });
+    }
+
+    // ── Step 1.9: Accounts overview intent ─────────────────────────────────
+    if (detectAccountsIntent(message)) {
+      const accts = await queryAll('accounts');
+      if (!accts.length) return res.json({ success: true, source: 'system', reply: 'No accounts configured in the system.' });
+      let reply = '🏦 **Account Configuration** (' + accts.length + ' accounts):\n\n';
+      reply += accts.map(a =>
+        '**' + a.account_name + '** (' + a.account_id + ')\n' +
+        '• Filter Mode: **' + a.filter_mode + '** | Default Action: **' + a.default_action + '**\n' +
+        '• Cutoff: ' + (a.cutoff_time || 'N/A') + ' | Debit Block: ' + (a.debit_block ? '**Yes** 🔒' : 'No') +
+        (a.max_daily_debit ? ' | Max Daily Debit: $' + Number(a.max_daily_debit).toLocaleString() : '')
+      ).join('\n\n');
+      return res.json({ success: true, source: 'system', reply });
     }
 
     // ── Step 2: Fetch full details for any specific TXN IDs mentioned ─────
@@ -607,12 +703,352 @@ router.post('/crud', authenticate, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// POST /api/chatbot/manage — Extended admin/management operations
+// ═══════════════════════════════════════════════════════════════════════════════
+router.post('/manage', authenticate, async (req, res) => {
+  try {
+    const { operation, data = {} } = req.body;
+    const user = req.user;
+    const isAdmin = user.role === 'admin';
+    const isSupervisor = user.role === 'supervisor';
+
+    // ── List users (admin) ───────────────────────────────────────────────────
+    if (operation === 'list_users') {
+      if (!isAdmin) return res.status(403).json({ success: false, error: 'Admin required' });
+      const users = await queryAll('users');
+      return res.json({ success: true, operation, data: users.map(u => ({
+        user_id: u.user_id, username: u.username, full_name: u.full_name,
+        email: u.email, role: u.role, is_active: u.is_active, last_login: u.last_login, created_at: u.created_at
+      }))});
+    }
+
+    // ── Update user role/status (admin) ──────────────────────────────────────
+    if (operation === 'update_user') {
+      if (!isAdmin) return res.status(403).json({ success: false, error: 'Admin required' });
+      const { user_id, role, is_active } = data;
+      if (!user_id) return res.status(400).json({ success: false, error: 'user_id required' });
+      const target = await queryOne('users', u => u.user_id === user_id);
+      if (!target) return res.status(404).json({ success: false, error: 'User not found' });
+      const updates = {};
+      if (role && ['reviewer', 'analyst', 'admin', 'supervisor'].includes(role)) updates.role = role;
+      if (is_active !== undefined) updates.is_active = !!is_active;
+      if (!Object.keys(updates).length) return res.status(400).json({ success: false, error: 'No valid fields to update (role, is_active)' });
+      await update('users', u => u.user_id === user_id, () => updates);
+      await insert('audit_logs', { transaction_id: null, event_type: 'user_updated', event_summary: '[CHATBOT] User ' + target.username + ' updated by ' + user.username + ': ' + JSON.stringify(updates), event_data: updates, actor: user.username, severity: 'info' });
+      return res.json({ success: true, operation, message: 'User **' + target.username + '** updated: ' + Object.entries(updates).map(([k,v]) => k + '=' + v).join(', ') });
+    }
+
+    // ── Delete user (admin) ──────────────────────────────────────────────────
+    if (operation === 'delete_user') {
+      if (!isAdmin) return res.status(403).json({ success: false, error: 'Admin required' });
+      const { user_id } = data;
+      if (!user_id) return res.status(400).json({ success: false, error: 'user_id required' });
+      if (user_id === user.user_id) return res.status(400).json({ success: false, error: 'Cannot delete your own account' });
+      const target = await queryOne('users', u => u.user_id === user_id);
+      if (!target) return res.status(404).json({ success: false, error: 'User not found' });
+      await remove('users', u => u.user_id === user_id);
+      await insert('audit_logs', { transaction_id: null, event_type: 'user_deleted', event_summary: '[CHATBOT] User ' + target.username + ' DELETED by ' + user.username, event_data: { target_user: target.username, target_role: target.role }, actor: user.username, severity: 'critical' });
+      return res.json({ success: true, operation, message: 'User **' + target.username + '** (' + target.full_name + ') permanently deleted.' });
+    }
+
+    // ── List pending exceptions with countdown ───────────────────────────────
+    if (operation === 'list_exceptions') {
+      const [excAccts, pending] = await Promise.all([queryAll('accounts'), queryAll('transactions', t => t.status === 'under_review')]);
+      const acct = excAccts[0];
+      const exceptions = (acct ? pending : []).map(txn => {
+        const created = new Date(txn.created_at);
+        const [hh, mm] = (acct.cutoff_time || '14:00').split(':').map(Number);
+        const cutoff = new Date(created); cutoff.setHours(hh, mm, 0, 0);
+        if (created > cutoff) cutoff.setDate(cutoff.getDate() + 1);
+        const msLeft = cutoff - new Date();
+        return { transaction_id: txn.transaction_id, company_name: txn.company_name, amount: txn.amount, risk_level: txn.risk_level, risk_score: txn.risk_score, ms_remaining: Math.max(0, msLeft), is_past_due: msLeft < 0, cutoff_time: acct.cutoff_time, default_action: acct.default_action, ai_recommendation: txn.ai_recommendation };
+      });
+      const pastDue = exceptions.filter(e => e.is_past_due).length;
+      const urgent  = exceptions.filter(e => !e.is_past_due && e.ms_remaining < 3600000).length;
+      return res.json({ success: true, operation, data: exceptions, summary: { total: exceptions.length, past_due: pastDue, urgent, safe: exceptions.length - pastDue - urgent } });
+    }
+
+    // ── Exception pay/return decision ────────────────────────────────────────
+    if (operation === 'exception_decide') {
+      const { transaction_id, decision, reason } = data;
+      if (!transaction_id) return res.status(400).json({ success: false, error: 'transaction_id required' });
+      if (!['pay', 'return'].includes(decision)) return res.status(400).json({ success: false, error: 'decision must be pay or return' });
+      const txn = await queryOne('transactions', t => t.transaction_id === transaction_id);
+      if (!txn) return res.status(404).json({ success: false, error: 'Transaction not found: ' + transaction_id });
+      if (txn.status !== 'under_review') return res.status(400).json({ success: false, error: 'Transaction is ' + txn.status + ', not under_review' });
+      const newStatus = decision === 'pay' ? 'approved' : 'declined';
+      await update('transactions', t => t.transaction_id === transaction_id, () => ({ status: newStatus, reviewer_decision: decision === 'pay' ? 'approve' : 'decline', reviewer_notes: reason || 'Exception ' + decision + ' via chatbot', decision_at: new Date().toISOString(), reviewer_id: user.user_id, reviewer_name: user.full_name, reviewer_username: user.username, reviewer_role: user.role }));
+      await insert('audit_logs', { transaction_id, event_type: decision === 'pay' ? 'human_approved' : 'human_declined', event_summary: 'Exception ' + decision.toUpperCase() + ' by ' + user.full_name + ' via chatbot — ' + txn.company_name + ' $' + txn.amount, event_data: { decision, source: 'chatbot_manage' }, actor: user.full_name, severity: decision === 'return' ? 'warning' : 'info' });
+      return res.json({ success: true, operation, message: (decision === 'pay' ? '✅' : '❌') + ' Transaction **' + transaction_id + '** — ' + txn.company_name + ' ($' + Number(txn.amount).toLocaleString() + ') has been **' + newStatus + '**.' });
+    }
+
+    // ── Apply defaults to all past-due exceptions (admin) ────────────────────
+    if (operation === 'apply_defaults') {
+      if (!isAdmin) return res.status(403).json({ success: false, error: 'Admin required' });
+      const [excAccts, pending] = await Promise.all([queryAll('accounts'), queryAll('transactions', t => t.status === 'under_review')]);
+      const acct = excAccts[0];
+      let applied = 0;
+      for (const txn of pending) {
+        if (!acct) continue;
+        const created = new Date(txn.created_at);
+        const [hh, mm] = (acct.cutoff_time || '14:00').split(':').map(Number);
+        const cutoff = new Date(created); cutoff.setHours(hh, mm, 0, 0);
+        if (created > cutoff) cutoff.setDate(cutoff.getDate() + 1);
+        if (cutoff > new Date()) continue;
+        const newStatus = acct.default_action === 'pay' ? 'approved' : 'declined';
+        await update('transactions', t => t.transaction_id === txn.transaction_id, () => ({ status: newStatus, reviewer_decision: acct.default_action === 'pay' ? 'approve' : 'decline', reviewer_notes: 'DEFAULT ACTION via chatbot: ' + acct.default_action.toUpperCase() + ' — past cutoff ' + acct.cutoff_time, decision_at: new Date().toISOString() }));
+        await insert('audit_logs', { transaction_id: txn.transaction_id, event_type: 'human_reviewed', event_summary: '⏰ DEFAULT ACTION: ' + acct.default_action.toUpperCase() + ' applied via chatbot by ' + user.username, event_data: { source: 'chatbot_manage', default_action: acct.default_action }, actor: 'SYSTEM', severity: 'warning' });
+        applied++;
+      }
+      return res.json({ success: true, operation, message: '⏰ Applied default actions to **' + applied + '** past-due exception' + (applied !== 1 ? 's' : '') + '.', applied });
+    }
+
+    // ── Create MIR info request (admin/supervisor) ───────────────────────────
+    if (operation === 'request_info') {
+      if (!isAdmin && !isSupervisor) return res.status(403).json({ success: false, error: 'Admin or supervisor required' });
+      const { transaction_id, category, message: mirMsg, originator_email } = data;
+      if (!transaction_id) return res.status(400).json({ success: false, error: 'transaction_id required' });
+      const MIR_CATS = ['IDENTITY_VERIFICATION','AUTHORIZATION_PROOF','BUSINESS_PURPOSE_CLARIFICATION','AMOUNT_DISCREPANCY','ACCOUNT_OWNERSHIP','SANCTIONS_REVIEW','DUPLICATE_EXPLANATION','CUSTOM'];
+      if (!category || !MIR_CATS.includes(category)) return res.status(400).json({ success: false, error: 'category must be one of: ' + MIR_CATS.join(', ') });
+      if (!mirMsg || mirMsg.trim().length < 10) return res.status(400).json({ success: false, error: 'message required (min 10 chars)' });
+      const txn = await queryOne('transactions', t => t.transaction_id === transaction_id);
+      if (!txn) return res.status(404).json({ success: false, error: 'Transaction not found: ' + transaction_id });
+      if (!['under_review', 'more_info_required'].includes(txn.status)) return res.status(409).json({ success: false, error: 'Cannot request info on status: ' + txn.status });
+      const crypto = require('crypto');
+      const { v4: uuidv4MIR } = require('uuid');
+      const TOKEN_EXPIRY_HOURS = 72, MIR_SLA_HOURS = 48;
+      const portalToken = crypto.randomBytes(32).toString('hex');
+      const requestId = 'MIR-' + uuidv4MIR().slice(0, 8).toUpperCase();
+      const now = new Date();
+      const tokenExpiresAt = new Date(now.getTime() + TOKEN_EXPIRY_HOURS * 3600000).toISOString();
+      const slaDeadlineAt  = new Date(now.getTime() + MIR_SLA_HOURS * 3600000).toISOString();
+      const existing = await queryAll('info_requests', r => r.transaction_id === transaction_id);
+      const roundNumber = existing.length + 1;
+      await insert('info_requests', { request_id: requestId, transaction_id, round_number: roundNumber, requested_by: user.full_name, actor_type: 'HUMAN', category, message: mirMsg.trim(), requested_fields: [], portal_token: portalToken, token_expires_at: tokenExpiresAt, sla_deadline_at: slaDeadlineAt, status: 'pending', response_message: null, originator_email: originator_email || txn.originator_email || null });
+      await update('transactions', t => t.transaction_id === transaction_id, () => ({ status: 'more_info_required', last_info_request_id: requestId, info_request_rounds: roundNumber }));
+      const PORTAL_BASE = process.env.PORTAL_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
+      const portalUrl = PORTAL_BASE + '/portal/' + portalToken;
+      await insert('audit_logs', { transaction_id, event_type: 'info_requested', event_summary: '🔄 Info requested via chatbot by ' + user.full_name + ' [Round ' + roundNumber + '] — ' + category, event_data: { request_id: requestId, round: roundNumber, category, portal_url: portalUrl }, actor: user.full_name, severity: 'info' });
+      return res.json({ success: true, operation, message: '📨 MIR request created for **' + transaction_id + '** [Round ' + roundNumber + '].\n\nPortal link: ' + portalUrl, request_id: requestId, portal_url: portalUrl, token_expires_at: tokenExpiresAt, sla_deadline_at: slaDeadlineAt });
+    }
+
+    // ── List info requests for a transaction ─────────────────────────────────
+    if (operation === 'list_info_requests') {
+      const { transaction_id } = data;
+      if (!transaction_id) return res.status(400).json({ success: false, error: 'transaction_id required' });
+      const requests = await queryAll('info_requests', r => r.transaction_id === transaction_id, { orderBy: 'created_at', desc: false });
+      return res.json({ success: true, operation, data: requests.map(r => ({ ...r, portal_token: undefined })), total: requests.length });
+    }
+
+    // ── Human override of AI workflow (admin/supervisor) ─────────────────────
+    if (operation === 'override_ai') {
+      if (!isAdmin && !isSupervisor) return res.status(403).json({ success: false, error: 'Admin or supervisor required' });
+      const { transaction_id } = data;
+      if (!transaction_id) return res.status(400).json({ success: false, error: 'transaction_id required' });
+      const txn = await queryOne('transactions', t => t.transaction_id === transaction_id);
+      if (!txn) return res.status(404).json({ success: false, error: 'Transaction not found' });
+      await update('transactions', t => t.transaction_id === transaction_id, () => ({ ai_human_override: true, ai_escalation_reason: 'Human override by ' + user.full_name + ' via chatbot', status: txn.status === 'ai_workflow' ? 'under_review' : txn.status }));
+      await insert('audit_logs', { transaction_id, event_type: 'human_override', event_summary: '👤 Human override via chatbot: ' + user.full_name + ' took control from AI', event_data: { reviewer: user.username, source: 'chatbot_manage' }, actor: user.full_name, severity: 'warning' });
+      return res.json({ success: true, operation, message: '👤 Human override activated for **' + transaction_id + '**. Transaction is now in your review queue.' });
+    }
+
+    // ── List accounts ────────────────────────────────────────────────────────
+    if (operation === 'list_accounts') {
+      const accounts = await queryAll('accounts');
+      return res.json({ success: true, operation, data: accounts });
+    }
+
+    // ── Update account settings (admin) ──────────────────────────────────────
+    if (operation === 'update_account') {
+      if (!isAdmin) return res.status(403).json({ success: false, error: 'Admin required' });
+      const { account_id, ...updates } = data;
+      if (!account_id) return res.status(400).json({ success: false, error: 'account_id required' });
+      const acct = await queryOne('accounts', a => a.account_id === account_id);
+      if (!acct) return res.status(404).json({ success: false, error: 'Account not found: ' + account_id });
+      const allowed = ['filter_mode', 'cutoff_time', 'default_action', 'debit_block', 'max_daily_debit'];
+      const valid = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)));
+      if (!Object.keys(valid).length) return res.status(400).json({ success: false, error: 'No valid fields. Allowed: ' + allowed.join(', ') });
+      await update('accounts', a => a.account_id === account_id, () => valid);
+      await insert('audit_logs', { transaction_id: null, event_type: 'account_updated', event_summary: '[CHATBOT] Account ' + acct.account_name + ' updated by ' + user.username + ': ' + JSON.stringify(valid), event_data: valid, actor: user.username, severity: 'info' });
+      return res.json({ success: true, operation, message: '✅ Account **' + acct.account_name + '** updated: ' + Object.keys(valid).join(', ') });
+    }
+
+    // ── Add company to account whitelist (admin) ──────────────────────────────
+    if (operation === 'whitelist_add') {
+      if (!isAdmin) return res.status(403).json({ success: false, error: 'Admin required' });
+      const { account_id, company_id, company_name, max_amount } = data;
+      if (!account_id || !company_id) return res.status(400).json({ success: false, error: 'account_id and company_id required' });
+      const acct = await queryOne('accounts', a => a.account_id === account_id);
+      if (!acct) return res.status(404).json({ success: false, error: 'Account not found' });
+      await insert('acl_filter_rules', { account_id, company_id, company_name: company_name || company_id, max_amount: max_amount ? parseFloat(max_amount) : null, is_active: true, notes: 'Added via chatbot by ' + user.username });
+      await insert('audit_logs', { transaction_id: null, event_type: 'whitelist_added', event_summary: '[CHATBOT] Whitelist: ' + (company_name || company_id) + ' added to ' + acct.account_name + ' by ' + user.username, event_data: { account_id, company_id }, actor: user.username, severity: 'info' });
+      return res.json({ success: true, operation, message: '✅ **' + (company_name || company_id) + '** added to whitelist for **' + acct.account_name + '**.' });
+    }
+
+    // ── Remove company from whitelist (admin) ─────────────────────────────────
+    if (operation === 'whitelist_remove') {
+      if (!isAdmin) return res.status(403).json({ success: false, error: 'Admin required' });
+      const { account_id, company_id } = data;
+      if (!account_id || !company_id) return res.status(400).json({ success: false, error: 'account_id and company_id required' });
+      const acct = await queryOne('accounts', a => a.account_id === account_id);
+      if (!acct) return res.status(404).json({ success: false, error: 'Account not found' });
+      await remove('acl_filter_rules', r => r.account_id === account_id && r.company_id === company_id);
+      await insert('audit_logs', { transaction_id: null, event_type: 'whitelist_removed', event_summary: '[CHATBOT] Whitelist: ' + company_id + ' removed from ' + acct.account_name + ' by ' + user.username, event_data: { account_id, company_id }, actor: user.username, severity: 'warning' });
+      return res.json({ success: true, operation, message: '🗑️ **' + company_id + '** removed from whitelist for **' + acct.account_name + '**.' });
+    }
+
+    // ── List recent bulk jobs ─────────────────────────────────────────────────
+    if (operation === 'list_bulk_jobs') {
+      const jobs = await queryAll('batch_jobs', null, { orderBy: 'created_at', desc: true, limit: 10 }).catch(() => []);
+      return res.json({ success: true, operation, data: jobs });
+    }
+
+    // ── Analytics summary ─────────────────────────────────────────────────────
+    if (operation === 'analytics') {
+      const allTxns = await queryAll('transactions');
+      const total = allTxns.length;
+      const statusCounts = { auto_approved: 0, approved: 0, declined: 0, under_review: 0, more_info_required: 0, ai_workflow: 0 };
+      allTxns.forEach(t => { if (t.status in statusCounts) statusCounts[t.status]++; });
+      const riskDist = { level1: allTxns.filter(t => t.risk_level === 1).length, level2: allTxns.filter(t => t.risk_level === 2).length, level3: allTxns.filter(t => t.risk_level === 3).length };
+      const totalValue = allTxns.reduce((a, t) => a + (parseFloat(t.amount) || 0), 0);
+      const [learning, rules] = await Promise.all([getLearningStats(), queryAll('risk_rules', null, { orderBy: 'trigger_count', desc: true, limit: 5 }).catch(() => [])]);
+      return res.json({ success: true, operation, data: { total, statusCounts, riskDist, totalValue: Math.round(totalValue * 100) / 100, learning, topRules: rules } });
+    }
+
+    // ── List risk rules ───────────────────────────────────────────────────────
+    if (operation === 'list_rules') {
+      const rules = await queryAll('risk_rules', null, { orderBy: 'trigger_count', desc: true }).catch(() => []);
+      return res.json({ success: true, operation, data: rules });
+    }
+
+    return res.status(400).json({ success: false, error: 'Unknown operation: ' + operation });
+
+  } catch (e) {
+    console.error('[Chatbot /manage]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── GET /api/chatbot/context ──────────────────────────────────────────────────
 router.get('/context', async (req, res) => {
   try {
     const ctx = await buildLiveContext();
     res.json({ success: true, data: ctx });
   } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CHAT SESSION PERSISTENCE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/chatbot/sessions — list user's sessions ─────────────────────────
+router.get('/sessions', authenticate, async (req, res) => {
+  try {
+    const sessions = await queryAll('chat_sessions',
+      s => s.user_id === req.user.user_id,
+      { orderBy: 'last_message_at', desc: true, limit: 60 }
+    );
+    res.json({ success: true, data: sessions });
+  } catch (e) {
+    console.error('[Chatbot /sessions GET]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── POST /api/chatbot/sessions — create new session ──────────────────────────
+router.post('/sessions', authenticate, async (req, res) => {
+  try {
+    const session_id = 'sess_' + uuidv4().replace(/-/g, '').slice(0, 20);
+    const now = new Date().toISOString();
+    await insert('chat_sessions', {
+      session_id,
+      user_id: req.user.user_id,
+      title: 'New Chat',
+      message_count: 0,
+      last_message_at: now,
+    });
+    res.json({ success: true, data: { session_id, title: 'New Chat', last_message_at: now } });
+  } catch (e) {
+    console.error('[Chatbot /sessions POST]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── DELETE /api/chatbot/sessions/:id — delete session + its messages ──────────
+router.delete('/sessions/:id', authenticate, async (req, res) => {
+  try {
+    const sid = req.params.id;
+    const sess = await queryOne('chat_sessions', s => s.session_id === sid && s.user_id === req.user.user_id);
+    if (!sess) return res.status(404).json({ success: false, error: 'Session not found' });
+    await remove('chat_sessions', s => s.session_id === sid);
+    await remove('chat_messages', m => m.session_id === sid);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[Chatbot /sessions DELETE]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── GET /api/chatbot/sessions/:id/messages — load messages for a session ──────
+router.get('/sessions/:id/messages', authenticate, async (req, res) => {
+  try {
+    const sid = req.params.id;
+    const sess = await queryOne('chat_sessions', s => s.session_id === sid && s.user_id === req.user.user_id);
+    if (!sess) return res.status(404).json({ success: false, error: 'Session not found' });
+    const messages = await queryAll('chat_messages',
+      m => m.session_id === sid,
+      { orderBy: 'timestamp', desc: false }
+    );
+    res.json({ success: true, data: messages });
+  } catch (e) {
+    console.error('[Chatbot /sessions/:id/messages GET]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── POST /api/chatbot/sessions/:id/messages — save messages batch ─────────────
+router.post('/sessions/:id/messages', authenticate, async (req, res) => {
+  try {
+    const sid = req.params.id;
+    const { messages } = req.body;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ success: false, error: 'messages array required' });
+    }
+
+    const sess = await queryOne('chat_sessions', s => s.session_id === sid && s.user_id === req.user.user_id);
+    if (!sess) return res.status(404).json({ success: false, error: 'Session not found' });
+
+    const now = new Date().toISOString();
+
+    for (const m of messages) {
+      await insert('chat_messages', {
+        session_id: sid,
+        user_id: req.user.user_id,
+        role: m.role,
+        content: m.content,
+        source: m.source || (m.role === 'user' ? 'user' : 'ai'),
+        timestamp: m.timestamp || now,
+      });
+    }
+
+    const newCount = (sess.message_count || 0) + messages.length;
+    const firstUserMsg = messages.find(m => m.role === 'user');
+    const shouldSetTitle = (sess.message_count || 0) === 0 && firstUserMsg;
+    const newTitle = shouldSetTitle
+      ? firstUserMsg.content.slice(0, 48) + (firstUserMsg.content.length > 48 ? '…' : '')
+      : sess.title;
+
+    await update('chat_sessions',
+      s => s.session_id === sid && s.user_id === req.user.user_id,
+      doc => ({ ...doc, message_count: newCount, title: newTitle, last_message_at: now })
+    );
+
+    res.json({ success: true, title: newTitle, message_count: newCount });
+  } catch (e) {
+    console.error('[Chatbot /sessions/:id/messages POST]', e);
     res.status(500).json({ success: false, error: e.message });
   }
 });

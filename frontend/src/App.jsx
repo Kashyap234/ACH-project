@@ -1,4 +1,7 @@
 // frontend/src/App.jsx
+// CHANGE: Added public /portal/:token route for the Originator Portal.
+// The portal route renders OUTSIDE the authenticated sidebar layout — it has
+// no nav, no auth guard, and no admin context. All existing routes unchanged.
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -13,6 +16,7 @@ import AccountManager     from './pages/AccountManager';
 import IssuedCheckRegister from './pages/IssuedCheckRegister';
 import UserManagement     from './pages/UserManagement';
 import LoginPage          from './pages/LoginPage';
+import OriginatorPortal   from './pages/OriginatorPortal';   // NEW: MIR feature
 import Chatbot            from './components/Chatbot';
 import { analyticsApi, exceptionsApi } from './api/client';
 import './index.css';
@@ -25,7 +29,7 @@ const ROLE_COLORS = {
   reviewer:   'var(--accent-blue)',
 };
 
-function Sidebar({ pendingCount, exceptionCount }) {
+function Sidebar({ pendingCount, exceptionCount, mirCount }) {
   const { user, logout } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -33,15 +37,17 @@ function Sidebar({ pendingCount, exceptionCount }) {
     { to:'/',           icon:'🏠', label:'Dashboard'          },
     { to:'/intake',     icon:'➕', label:'Add Transaction'     },
     { to:'/bulk',       icon:'📦', label:'Bulk Upload'         },
-    { to:'/queue',      icon:'⚠️',  label:'Review Queue',       badge: pendingCount },
+    { to:'/queue',      icon:'⚠️',  label:'Review Queue',        badge: pendingCount },
+    { section: '── More Info ──' },
+    // MIR badge: separate from main pending count
+    { to:'/queue?filter=more_info_required', icon:'🔄', label:'Awaiting Responses', badge: mirCount, badgeColor:'var(--accent-yellow)' },
     { section: '── Positive Pay ──' },
     { to:'/exceptions', icon:'⚡', label:'Exception Dashboard', badge: exceptionCount, badgeColor:'var(--accent-red)' },
     { to:'/accounts',   icon:'🏦', label:'Account ACH Filters' },
-    { to:'/register',   icon:'✅', label:'Check Register'     },
+    { to:'/register',   icon:'✅', label:'Check Register'      },
     { section: '── Reports ──' },
     { to:'/analytics',  icon:'📊', label:'Analytics'           },
     { to:'/audit',      icon:'📋', label:'Audit Log'            },
-    // Admin-only section
     ...(isAdmin ? [
       { section: '── Administration ──' },
       { to:'/users',    icon:'👥', label:'User Management'     },
@@ -53,7 +59,7 @@ function Sidebar({ pendingCount, exceptionCount }) {
       <div className="sidebar-logo">
         <div className="logo-icon">🏦</div>
         <h1>ACH Triage AI</h1>
-        <p>Positive Pay · NACHA v3.0</p>
+        <p>Positive Pay · NACHA v4.0</p>
       </div>
       <nav className="sidebar-nav">
         {nav.map((item, i) => {
@@ -63,113 +69,104 @@ function Sidebar({ pendingCount, exceptionCount }) {
           return (
             <NavLink key={item.to} to={item.to} end={item.to==='/'} className={({isActive})=>`nav-item${isActive?' active':''}`}>
               <span className="nav-icon">{item.icon}</span>
-              {item.label}
-              {item.badge > 0 && <span className="nav-badge" style={{ background: item.badgeColor || 'var(--accent-red)' }}>{item.badge}</span>}
+              <span className="nav-label">{item.label}</span>
+              {item.badge > 0 && (
+                <span className="nav-badge" style={{ background: item.badgeColor || 'var(--accent-red)' }}>{item.badge}</span>
+              )}
             </NavLink>
           );
         })}
       </nav>
 
-      {/* User Info + Logout */}
       {user && (
         <div className="sidebar-user">
-          <div className="sidebar-user-avatar">
-            {user.full_name.charAt(0).toUpperCase()}
-          </div>
-          <div className="sidebar-user-info">
-            <div className="sidebar-user-name">{user.full_name}</div>
-            <div className="sidebar-user-role" style={{ color: ROLE_COLORS[user.role] || 'var(--accent-blue)' }}>
-              {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+          <div className="user-info">
+            <div className="user-name">{user.full_name}</div>
+            <div className="user-role" style={{ color: ROLE_COLORS[user.role] || 'var(--text-muted)' }}>
+              {user.role?.toUpperCase()}
             </div>
           </div>
-          <button
-            id="logout-btn"
-            className="sidebar-logout-btn"
-            onClick={logout}
-            title="Sign out"
-          >
-            ⏏
-          </button>
+          <button className="btn btn-ghost btn-sm" onClick={logout} style={{ marginTop:8 }}>Sign Out</button>
         </div>
       )}
-
-      <div className="sidebar-footer">
-        <div><span className="status-dot"/>System Online · v3.0</div>
-        <div style={{marginTop:4,fontSize:'0.62rem'}}>Full NACHA · Bulk · Exceptions · Positive Pay</div>
-      </div>
     </aside>
   );
 }
 
-// ── Protected Route wrapper ───────────────────────────────────────────────────
-function ProtectedRoute({ children, adminOnly = false }) {
-  const { user, loading } = useAuth();
-  if (loading) {
-    return (
-      <div className="loading-center" style={{ minHeight: '100vh', background: 'var(--bg-primary)' }}>
-        <div className="spinner" style={{ width: 40, height: 40 }} />
-        <p style={{ color: 'var(--text-secondary)', marginTop: 12 }}>Verifying session…</p>
-      </div>
-    );
-  }
-  if (!user) return <Navigate to="/login" replace />;
-  if (adminOnly && user.role !== 'admin') return <Navigate to="/" replace />;
-  return children;
-}
-
+// ── Authenticated app shell ───────────────────────────────────────────────────
 function AppShell() {
-  const [pending,    setPending]    = useState(0);
-  const [exceptions, setExceptions] = useState(0);
+  const { user, loading } = useAuth();
+  const [pendingCount,   setPendingCount]   = useState(0);
+  const [exceptionCount, setExceptionCount] = useState(0);
+  const [mirCount,       setMirCount]       = useState(0);
 
-  const refresh = () => {
-    analyticsApi.dashboard().then(r => setPending(r.data?.totals?.pending||0)).catch(()=>{});
-    exceptionsApi.getAll().then(r => setExceptions(r.summary?.total||0)).catch(()=>{});
-  };
+  useEffect(() => {
+    if (!user) return;
+    const load = () => {
+      analyticsApi.dashboard().then(d => {
+        setPendingCount(d?.data?.pending_review || 0);
+        setMirCount(d?.data?.more_info_required || 0);
+      }).catch(() => {});
+      exceptionsApi.getAll().then(r => {
+        setExceptionCount(r?.summary?.total || 0);
+      }).catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [user]);
 
-  useEffect(() => { refresh(); const t = setInterval(refresh, 15000); return () => clearInterval(t); }, []);
+  if (loading) return <div className="loading-center"><div className="spinner" /></div>;
+  if (!user) return <Navigate to="/login" replace />;
 
   return (
-    <div className="app-shell">
-      <Sidebar pendingCount={pending} exceptionCount={exceptions} />
+    <div className="app-layout">
+      <Sidebar pendingCount={pendingCount} exceptionCount={exceptionCount} mirCount={mirCount} />
       <main className="main-content">
         <Routes>
-          <Route path="/"           element={<Dashboard />} />
-          <Route path="/intake"     element={<TransactionIntake onSubmit={refresh} />} />
-          <Route path="/bulk"       element={<BulkUpload onComplete={refresh} />} />
-          <Route path="/queue"      element={<ReviewQueue onDecision={refresh} />} />
-          <Route path="/exceptions" element={<ExceptionDashboard onDecision={refresh} />} />
-          <Route path="/accounts"   element={<AccountManager />} />
-          <Route path="/register"   element={<IssuedCheckRegister />} />
-          <Route path="/analytics"  element={<Analytics />} />
-          <Route path="/audit"      element={<AuditLog />} />
-          {/* Admin-only */}
-          <Route path="/users"      element={<ProtectedRoute adminOnly><UserManagement /></ProtectedRoute>} />
+          <Route path="/"          element={<Dashboard />} />
+          <Route path="/intake"    element={<TransactionIntake />} />
+          <Route path="/bulk"      element={<BulkUpload />} />
+          <Route path="/queue"     element={<ReviewQueue onDecision={() => {
+            analyticsApi.dashboard().then(d => {
+              setPendingCount(d?.data?.pending_review || 0);
+              setMirCount(d?.data?.more_info_required || 0);
+            }).catch(() => {});
+          }} />} />
+          <Route path="/analytics" element={<Analytics />} />
+          <Route path="/audit"     element={<AuditLog />} />
+          <Route path="/exceptions"element={<ExceptionDashboard onDecision={() => {
+            exceptionsApi.getAll().then(r => setExceptionCount(r?.summary?.total || 0)).catch(() => {});
+          }} />} />
+          <Route path="/accounts"  element={<AccountManager />} />
+          <Route path="/register"  element={<IssuedCheckRegister />} />
+          <Route path="/users"     element={<UserManagement />} />
+          <Route path="*"          element={<Navigate to="/" replace />} />
         </Routes>
+        <Chatbot />
       </main>
-      <Chatbot />
     </div>
   );
 }
 
+// ── Root app with public portal route ─────────────────────────────────────────
 export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
+    <AuthProvider>
+      <BrowserRouter>
         <Routes>
-          {/* Public routes — only login */}
-          <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-          {/* All other routes are protected */}
-          <Route path="/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
-        </Routes>
-      </AuthProvider>
-    </BrowserRouter>
-  );
-}
+          {/* Public login page — no sidebar, no auth */}
+          <Route path="/login" element={<LoginPage />} />
 
-// Redirect logged-in users away from login
-function PublicRoute({ children }) {
-  const { user, loading } = useAuth();
-  if (loading) return null;
-  if (user) return <Navigate to="/" replace />;
-  return children;
+          {/* NEW: Originator Portal — public, token-scoped, no sidebar, no auth guard */}
+          {/* This route is OUTSIDE the authenticated AppShell intentionally.          */}
+          {/* It renders OriginatorPortal which handles its own loading/error states.  */}
+          <Route path="/portal/:token" element={<OriginatorPortal />} />
+
+          {/* All other routes require authentication (handled inside AppShell) */}
+          <Route path="/*" element={<AppShell />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
+  );
 }

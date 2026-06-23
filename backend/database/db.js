@@ -87,12 +87,12 @@ async function insert(table, data) {
   const row = clean({ id, created_at: now, updated_at: now, ...data });
 
   // Tables that don't have a unique natural key — always use uuid
-  const INDEX_KEYED = new Set(['audit_logs', 'human_decisions', 'review_decisions', 'acl_filter_rules', 'check_register']);
+  const INDEX_KEYED = new Set(['audit_logs', 'human_decisions', 'review_decisions', 'acl_filter_rules', 'check_register', 'info_requests', 'chat_sessions', 'chat_messages']);
 
   // Determine natural key for _doc_key (deterministic dedup)
   const naturalKey = INDEX_KEYED.has(table)
     ? `${table}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    : (row.transaction_id || row.user_id || row.account_id
+    : (row.request_id || row.transaction_id || row.user_id || row.account_id
         || row.job_id || row.rule_code || row.code || row.pattern_hash
         || String(id));
 
