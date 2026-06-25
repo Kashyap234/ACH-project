@@ -126,7 +126,7 @@ function AppShell() {
     exceptionsApi.getAll().then(r => setExceptions(r.summary?.total||0)).catch(()=>{});
   };
 
-  useEffect(() => { refresh(); const t = setInterval(refresh, 15000); return () => clearInterval(t); }, []);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 60000); return () => clearInterval(t); }, []);
 
   return (
     <div className="app-shell">

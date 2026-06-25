@@ -1,6 +1,6 @@
 // backend/services/learningPipeline.js — Rich feature vector learning (Firestore async)
 const crypto = require('crypto');
-const { queryAll, queryOne, insert, update } = require('../database/db');
+const { queryAll, queryOne, insert, update, count } = require('../database/db');
 
 const MIN_DECISIONS = 3;
 const CONF_THRESHOLD = 0.85;
@@ -238,11 +238,15 @@ async function checkPatternMatch(txn, riskFlags) {
 }
 
 async function getLearningStats() {
+  // Fetch patterns (small table, full data needed for aggregation)
   const all = await queryAll('learning_patterns');
   const promoted = all.filter(p => p.promoted_to_level1);
   const totalDec = all.reduce((a, p) => a + (p.total_decisions || 0), 0);
-  const totalRev = (await queryAll('review_decisions')).length;
 
+  // Use SQL COUNT instead of fetching all rows just to get the length
+  const totalRev = await count('review_decisions');
+
+  // Only fetch declined decisions (filtered server-side via JS filterFn)
   const allDeclines = await queryAll('review_decisions', r => r.decision === 'decline');
   const fiCounts = {};
   allDeclines.forEach(r => (r.fraud_indicators || []).forEach(fi => { fiCounts[fi] = (fiCounts[fi] || 0) + 1; }));

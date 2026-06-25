@@ -40,12 +40,22 @@ function assertOk({ error }, context) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function queryAll(table, filterFn = null, { orderBy, desc = true, limit, offset = 0 } = {}) {
   const sb = getSupabase();
+
+  // Fast path: no JS filtering — push ORDER BY and LIMIT to Postgres so we
+  // only transfer the rows we actually need instead of the entire table.
+  if (!filterFn) {
+    let query = sb.from(table).select('*');
+    if (orderBy) query = query.order(`data->>${orderBy}`, { ascending: !desc });
+    if (limit !== undefined) query = query.range(offset, offset + limit - 1);
+    const { data: rows, error } = await query;
+    assertOk({ error }, `queryAll:${table}`);
+    return (rows || []).map(unwrap);
+  }
+
+  // Slow path: JS-side filtering (must fetch all rows, apply filter then sort/slice)
   const { data: rows, error } = await sb.from(table).select('*');
   assertOk({ error }, `queryAll:${table}`);
-
-  let results = (rows || []).map(unwrap);
-
-  if (filterFn)  results = results.filter(filterFn);
+  let results = (rows || []).map(unwrap).filter(filterFn);
 
   if (orderBy) {
     results.sort((a, b) => {
@@ -76,13 +86,9 @@ async function insert(table, data) {
   const sb  = getSupabase();
   const now = new Date().toISOString();
 
-  // Fetch current max id for backward-compat numeric id
-  const { data: rows } = await sb.from(table).select('data->id');
-  const maxId = (rows || []).reduce((m, r) => {
-    const n = Number(r.id) || 0;
-    return n > m ? n : m;
-  }, 0);
-  const id = maxId + 1;
+  // Fetch only the single highest id row instead of scanning the full table
+  const { data: topRow } = await sb.from(table).select('data->id').order('_id', { ascending: false }).limit(1);
+  const id = (Number(topRow?.[0]?.id) || 0) + 1;
 
   const row = clean({ id, created_at: now, updated_at: now, ...data });
 
@@ -158,8 +164,15 @@ async function remove(table, filterFn) {
 // Returns number of documents matching optional filter
 // ─────────────────────────────────────────────────────────────────────────────
 async function count(table, filterFn = null) {
+  if (!filterFn) {
+    // Use Postgres COUNT — transfers zero rows
+    const sb = getSupabase();
+    const { count: n, error } = await sb.from(table).select('*', { count: 'exact', head: true });
+    assertOk({ error }, `count:${table}`);
+    return n || 0;
+  }
   const all = await queryAll(table);
-  return filterFn ? all.filter(filterFn).length : all.length;
+  return all.filter(filterFn).length;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

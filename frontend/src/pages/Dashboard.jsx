@@ -109,7 +109,9 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); const t = setInterval(load, 20000); return () => clearInterval(t); }, []);
+  // App.jsx already polls the dashboard endpoint every 60s for sidebar counts.
+  // Load once on mount; manual refresh is available via the sidebar poll cycle.
+  useEffect(() => { load(); }, []);
 
   if (loading && !data) return <div className="loading-center"><div className="spinner" /><p>Loading dashboard…</p></div>;
   if (!data) return <div className="loading-center"><p>Failed to load dashboard. Is the backend running?</p></div>;
