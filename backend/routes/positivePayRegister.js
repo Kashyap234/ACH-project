@@ -27,7 +27,7 @@ function matchCheck(presented, issued) {
 router.get('/:account_id', async (req, res) => {
   try {
     const { status, limit=50, offset=0 } = req.query;
-    let rows = await queryAll('check_register', r => r.account_id === req.params.account_id, { orderBy:'issue_date', desc:true });
+    let rows = await queryAll('check_register', r => r.account_id === req.params.account_id, { where: { account_id: req.params.account_id }, orderBy:'issue_date', desc:true });
     if (status) rows = rows.filter(r => r.status === status);
     res.json({ success:true, data:rows.slice(+offset, +offset + +limit), total:rows.length });
   } catch(e) { res.status(500).json({ success:false, error:e.message }); }
@@ -38,7 +38,7 @@ router.post('/:account_id', async (req, res) => {
   try {
     const { check_serial_number, issued_amount, payee_name, issue_date, memo, void_reason } = req.body;
     if (!check_serial_number || !issued_amount) return res.status(400).json({ success:false, error:'check_serial_number and issued_amount required' });
-    const existing = await queryOne('check_register', r => r.account_id === req.params.account_id && r.check_serial_number === check_serial_number);
+    const existing = await queryOne('check_register', r => r.account_id === req.params.account_id && r.check_serial_number === check_serial_number, { account_id: req.params.account_id, check_serial_number });
     if (existing) return res.status(409).json({ success:false, error:'Check serial already in register' });
     const row = await insert('check_register', {
       account_id:          req.params.account_id,
@@ -74,7 +74,7 @@ router.post('/:account_id/bulk', async (req, res) => {
         const sn = row.check_serial_number || row.check_number || row.serial_number || row.check_no;
         const am = parseFloat(row.issued_amount || row.amount || '0');
         if (!sn || !am) { errors.push(`Line ${i+1}: missing serial or amount`); continue; }
-        const existing = await queryOne('check_register', r => r.account_id === req.params.account_id && r.check_serial_number === sn);
+        const existing = await queryOne('check_register', r => r.account_id === req.params.account_id && r.check_serial_number === sn, { account_id: req.params.account_id, check_serial_number: sn });
         if (!existing) {
           await insert('check_register', {
             account_id: req.params.account_id, check_serial_number:sn, issued_amount:am,
@@ -94,7 +94,7 @@ router.post('/:account_id/bulk', async (req, res) => {
 router.post('/:account_id/match', async (req, res) => {
   try {
     const { check_serial_number, amount, payee_name } = req.body;
-    const issued = await queryOne('check_register', r => r.account_id === req.params.account_id && r.check_serial_number === check_serial_number);
+    const issued = await queryOne('check_register', r => r.account_id === req.params.account_id && r.check_serial_number === check_serial_number, { account_id: req.params.account_id, check_serial_number });
     const matchResult = matchCheck({ amount:parseFloat(amount), payee_name }, issued);
     if (issued) {
       await update('check_register', r => r.id === issued.id, () => ({

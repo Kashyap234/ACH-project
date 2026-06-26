@@ -56,7 +56,7 @@ const defaultForm = {
   effective_date: new Date().toISOString().split('T')[0],
   entry_description:'',
   // Compliance
-  authorization_type:'', ofac_screened:false, aml_flag:false, prenote:false,
+  originator_email:'', authorization_type:'', ofac_screened:false, aml_flag:false, prenote:false,
   // Positive Pay
   is_positive_pay:false, check_serial_number:'', issued_check_amount:'', issued_check_date:'', payee_name:'',
   // IAT
@@ -257,6 +257,7 @@ export default function TransactionIntake({ onSubmit }) {
             <>
               <div className="card-title">🔒 Compliance & Risk Fields</div>
               <div className="form-grid" style={{marginTop:16}}>
+                <F label="Originator Email" field="originator_email" type="email" hint="Used by the bot to send MIR portal links during auto-approval workflows" />
                 <F label="Authorization Type" field="authorization_type">
                   <select className="form-select" value={form.authorization_type||''} onChange={e=>set('authorization_type',e.target.value||null)}>
                     <option value="">-- Select authorization type --</option>

@@ -44,11 +44,14 @@ router.get('/dashboard', async (req, res) => {
     const overdueReqs  = pendingReqs.filter(r => r.sla_deadline_at && new Date(r.sla_deadline_at) < new Date());
 
     const learning = await getLearningStats();
+    // Fetch last 15 audit logs server-side (limit pushed to Postgres), then enrich
+    // using the already-fetched allTxns map — avoids 15 extra full-table downloads.
     const allLogs  = await queryAll('audit_logs', null, { orderBy: 'created_at', desc: true, limit: 15 });
-    const recentLogs = await Promise.all(allLogs.map(async l => {
-      const txn = l.transaction_id ? await queryOne('transactions', t => t.transaction_id === l.transaction_id) : null;
+    const txnMap   = Object.fromEntries(allTxns.map(t => [t.transaction_id, t]));
+    const recentLogs = allLogs.map(l => {
+      const txn = l.transaction_id ? txnMap[l.transaction_id] : null;
       return { ...l, company_name: txn?.company_name, amount: txn?.amount, risk_level: txn?.risk_level };
-    }));
+    });
 
     res.json({ success: true, data: {
       totals: { total, autoApproved, approved, declined, pending, more_info_required: morInfo, ai_workflow: aiWorkflow },
@@ -115,13 +118,18 @@ router.get('/patterns', async (req, res) => {
 router.get('/audit', async (req, res) => {
   try {
     const { limit = 50, offset = 0 } = req.query;
-    const all   = await queryAll('audit_logs', null, { orderBy: 'created_at', desc: true });
-    const total = all.length;
-    const page  = all.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
-    const enriched = await Promise.all(page.map(async l => {
-      const txn = l.transaction_id ? await queryOne('transactions', t => t.transaction_id === l.transaction_id) : null;
+    // Fetch both tables in parallel — one download each instead of 1 + N*1
+    const [all, allTxns] = await Promise.all([
+      queryAll('audit_logs', null, { orderBy: 'created_at', desc: true }),
+      queryAll('transactions'),
+    ]);
+    const txnMap = Object.fromEntries(allTxns.map(t => [t.transaction_id, t]));
+    const total  = all.length;
+    const page   = all.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+    const enriched = page.map(l => {
+      const txn = l.transaction_id ? txnMap[l.transaction_id] : null;
       return { ...l, company_name: txn?.company_name, amount: txn?.amount, sec_code: txn?.sec_code, risk_level: txn?.risk_level };
-    }));
+    });
     res.json({ success: true, data: enriched, total });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });

@@ -141,12 +141,18 @@ async function processBatch(jobId) {
           txn.company_name = txn.individual_name || txn.company_id || 'Unknown';
         }
 
-        const isDbDuplicate = txn.trace_number ? !!(await queryOne('transactions', t => t.trace_number === txn.trace_number)) : false;
+        const isDbDuplicate = txn.trace_number
+          ? !!(await queryOne('transactions', t => t.trace_number === txn.trace_number, { trace_number: txn.trace_number }))
+          : false;
         const duplicate_trace = isDbDuplicate || batchTraceNumbers.has(txn.trace_number);
         if (txn.trace_number) batchTraceNumbers.add(txn.trace_number);
-        
+
         const todayStr = new Date().toISOString().split('T')[0];
-        const dbCount = (await queryAll('transactions', t => t.company_id === txn.company_id && t.effective_date === todayStr)).length;
+        const dbCount = (await queryAll(
+          'transactions',
+          t => t.company_id === txn.company_id && t.effective_date === todayStr,
+          { where: { company_id: txn.company_id, effective_date: todayStr } }
+        )).length;
         batchCompanyCounts[txn.company_id] = (batchCompanyCounts[txn.company_id] || 0) + 1;
         const company_daily_count = dbCount + batchCompanyCounts[txn.company_id];
         

@@ -7,13 +7,20 @@ const { queryAll, queryOne, insert, update } = require('../database/db');
 // ── Build exceptions from under_review transactions ──────────────────────────
 async function buildExceptions(accountId) {
   const accounts = await queryAll('accounts');
-  const allTxns  = await queryAll('transactions', t => t.status === 'under_review', { orderBy:'created_at', desc:true });
+  const allTxns  = await queryAll(
+    'transactions',
+    t => t.status === 'under_review',
+    { where: { status: 'under_review' }, orderBy: 'created_at', desc: true }
+  );
   const exceptions = [];
 
+  // Resolve account once outside the loop — avoids N full-table downloads
+  const acctForAll = accountId
+    ? accounts.find(a => a.account_id === accountId) || null
+    : accounts[0] || null;
+
   for (const txn of allTxns) {
-    const acct = accountId
-      ? await queryOne('accounts', a => a.account_id === accountId)
-      : accounts[0];
+    const acct = acctForAll;
 
     if (!acct) continue;
 

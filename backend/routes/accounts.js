@@ -32,10 +32,10 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     await ensureAccounts();
-    const acct = await queryOne('accounts', a => a.account_id === req.params.id);
+    const acct = await queryOne('accounts', a => a.account_id === req.params.id, { account_id: req.params.id });
     if (!acct) return res.status(404).json({ success:false, error:'Account not found' });
-    const rules    = await queryAll('acl_filter_rules', r => r.account_id === req.params.id);
-    const register = await queryAll('check_register',   r => r.account_id === req.params.id, { orderBy:'created_at', desc:true, limit:50 });
+    const rules    = await queryAll('acl_filter_rules', r => r.account_id === req.params.id, { where: { account_id: req.params.id } });
+    const register = await queryAll('check_register',   r => r.account_id === req.params.id, { where: { account_id: req.params.id }, orderBy:'created_at', desc:true, limit:50 });
     res.json({ success:true, data:{ ...acct, filter_rules:rules, check_register:register } });
   } catch(e) { res.status(500).json({ success:false, error:e.message }); }
 });

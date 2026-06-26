@@ -2,17 +2,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { bulkApi } from '../api/client';
 
-const SAMPLE_CSV = `sec_code,transaction_code,company_name,company_id,amount,transaction_type,routing_number,account_number,account_type,effective_date,entry_description,individual_name,authorization_type
-PPD,22,Acme Payroll Corp,ACMECORP01,3250.00,credit,021000021,1234567890,checking,${new Date().toISOString().split('T')[0]},PAYROLL,Jane Smith,PPD_WRITTEN
-CCD,27,GlobalTech LLC,GTECH2024X,8500.00,debit,071000013,9876543210,checking,${new Date().toISOString().split('T')[0]},VENDORPMT,GlobalTech LLC,CCD_SIGNED
-WEB,27,QuickShop Online,QSHOP09870,1200.00,debit,122000247,5512334455,checking,${new Date().toISOString().split('T')[0]},PURCHASE,Robert Chen,WEB_CLICK
-PPD,27,NationalEnergy Co,NATENG0001,450.00,debit,044000037,6677889900,checking,${new Date().toISOString().split('T')[0]},UTILITY,Mary Johnson,PPD_WRITTEN
-CCD,22,TechStartup Inc,TECHST0099,12000.00,credit,021000021,3344556677,checking,${new Date().toISOString().split('T')[0]},INVESTMNT,TechStartup Inc,CCD_SIGNED`;
+const SAMPLE_CSV = `sec_code,transaction_code,company_name,company_id,amount,transaction_type,routing_number,account_number,account_type,effective_date,entry_description,individual_name,authorization_type,originator_email
+PPD,22,Acme Payroll Corp,ACMECORP01,3250.00,credit,021000021,1234567890,checking,${new Date().toISOString().split('T')[0]},PAYROLL,Jane Smith,PPD_WRITTEN,jane.smith@acmecorp.com
+CCD,27,GlobalTech LLC,GTECH2024X,8500.00,debit,071000013,9876543210,checking,${new Date().toISOString().split('T')[0]},VENDORPMT,GlobalTech LLC,CCD_SIGNED,ap@globaltech.com
+WEB,27,QuickShop Online,QSHOP09870,1200.00,debit,122000247,5512334455,checking,${new Date().toISOString().split('T')[0]},PURCHASE,Robert Chen,WEB_CLICK,robert.chen@email.com
+PPD,27,NationalEnergy Co,NATENG0001,450.00,debit,044000037,6677889900,checking,${new Date().toISOString().split('T')[0]},UTILITY,Mary Johnson,PPD_WRITTEN,mary.johnson@nateng.com
+CCD,22,TechStartup Inc,TECHST0099,12000.00,credit,021000021,3344556677,checking,${new Date().toISOString().split('T')[0]},INVESTMNT,TechStartup Inc,CCD_SIGNED,finance@techstartup.com`;
 
 const SAMPLE_JSON = JSON.stringify([
-  { sec_code:'PPD', transaction_code:'22', company_name:'Acme Corp', company_id:'ACMECORP01', amount:3250, transaction_type:'credit', routing_number:'021000021', account_number:'1234567890', account_type:'checking', effective_date: new Date().toISOString().split('T')[0], entry_description:'PAYROLL', individual_name:'Jane Smith', authorization_type:'PPD_WRITTEN' },
-  { sec_code:'WEB', transaction_code:'27', company_name:'E-Commerce Ltd', company_id:'ECOML09870', amount:950, transaction_type:'debit', routing_number:'122000247', account_number:'5512334455', account_type:'checking', entry_description:'PURCHASE', individual_name:'Bob Jones', authorization_type:'WEB_CLICK' },
-  { sec_code:'CCD', transaction_code:'27', company_name:'Vendor Corp', company_id:'VENDCO0001', amount:22000, transaction_type:'debit', routing_number:'071000013', account_number:'9876543210', account_type:'checking', entry_description:'VENDORPMT', individual_name:'Vendor Corp', authorization_type:'CCD_SIGNED' },
+  { sec_code:'PPD', transaction_code:'22', company_name:'Acme Corp', company_id:'ACMECORP01', amount:3250, transaction_type:'credit', routing_number:'021000021', account_number:'1234567890', account_type:'checking', effective_date: new Date().toISOString().split('T')[0], entry_description:'PAYROLL', individual_name:'Jane Smith', authorization_type:'PPD_WRITTEN', originator_email:'jane.smith@acmecorp.com' },
+  { sec_code:'WEB', transaction_code:'27', company_name:'E-Commerce Ltd', company_id:'ECOML09870', amount:950, transaction_type:'debit', routing_number:'122000247', account_number:'5512334455', account_type:'checking', entry_description:'PURCHASE', individual_name:'Bob Jones', authorization_type:'WEB_CLICK', originator_email:'bob.jones@email.com' },
+  { sec_code:'CCD', transaction_code:'27', company_name:'Vendor Corp', company_id:'VENDCO0001', amount:22000, transaction_type:'debit', routing_number:'071000013', account_number:'9876543210', account_type:'checking', entry_description:'VENDORPMT', individual_name:'Vendor Corp', authorization_type:'CCD_SIGNED', originator_email:'ap@vendorcorp.com' },
 ], null, 2);
 
 function JobCard({ job, onRefresh }) {
@@ -187,7 +187,7 @@ export default function BulkUpload({ onComplete }) {
 
         {/* Format hint */}
         <div style={{ marginBottom:10, padding:'8px 12px', background:'var(--bg-primary)', borderRadius:'var(--radius-sm)', fontSize:'0.75rem', color:'var(--text-muted)' }}>
-          {format==='csv' && <>CSV must have a header row. Required columns: <code>company_name, company_id, amount, routing_number, account_number</code>. Optional: <code>sec_code, transaction_code, authorization_type, account_type, effective_date, individual_name</code>.</>}
+          {format==='csv' && <>CSV must have a header row. Required columns: <code>company_name, company_id, amount, routing_number, account_number</code>. Optional: <code>sec_code, transaction_code, authorization_type, account_type, effective_date, individual_name, originator_email</code>. Include <code>originator_email</code> so the bot can send MIR portal links during auto-approval workflows.</>}
           {format==='json' && <>Provide a JSON array of transaction objects. Same field names as the NACHA single-entry form.</>}
           {format==='nacha' && <>Paste the full NACHA fixed-width file content (94-character records). Supports File Header (1), Batch Header (5), Entry Detail (6), Addenda (7), Batch Control (8), File Control (9).</>}
         </div>
