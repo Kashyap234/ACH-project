@@ -56,6 +56,11 @@ function RecentActivity({ items, onTxnClick }) {
     pattern_promoted:    '🚀',
     pattern_demoted:     '⬇️',
     risk_flagged:        '⚠️',
+    user_login:          '🔐',
+    user_created:        '🆕',
+    user_updated:        '✏️',
+    user_deleted:        '🗑️',
+    password_changed:    '🔑',
   };
 
   return (

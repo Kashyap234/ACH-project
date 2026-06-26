@@ -37,7 +37,7 @@ router.get('/dashboard', async (req, res) => {
     // Fetch recent audit logs — server-side ordered + limited, minimal columns
     const { data: logRows, error: logErr } = await sb
       .from('audit_logs')
-      .select('data->transaction_id, data->action, data->actor, data->created_at')
+      .select('data->transaction_id, data->event_type, data->event_summary, data->actor, data->created_at')
       .order('created_at', { ascending: false })
       .limit(10);
     if (logErr) throw new Error(logErr.message);
