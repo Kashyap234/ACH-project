@@ -12,7 +12,11 @@ const tables = [
   'batch_jobs',
   'accounts',
   'acl_filter_rules',
-  'check_register'
+  'check_register',
+  'info_requests',
+  'transaction_lifecycles',
+  'chat_sessions',
+  'chat_messages'
 ];
 
 async function deleteSupabaseData() {

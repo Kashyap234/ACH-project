@@ -12,10 +12,12 @@ const { authenticate } = require('../middleware/auth');
 router.get('/', async (req, res) => {
   try {
     const { status, risk_level, sec_code, limit = 50, offset = 0 } = req.query;
-    let rows = await queryAll('transactions', null, { orderBy: 'created_at', desc: true });
-    if (status)     rows = rows.filter(t => t.status === status);
+    // Push text equality filters server-side; risk_level needs client-side int cast
+    const where = {};
+    if (status)   where.status   = status;
+    if (sec_code) where.sec_code = sec_code.toUpperCase();
+    let rows = await queryAll('transactions', null, { where: Object.keys(where).length ? where : undefined, orderBy: 'created_at', desc: true });
     if (risk_level) rows = rows.filter(t => t.risk_level === parseInt(risk_level));
-    if (sec_code)   rows = rows.filter(t => t.sec_code === sec_code.toUpperCase());
     const total = rows.length;
     rows = rows.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
     res.json({ success: true, data: rows, total });
@@ -25,12 +27,12 @@ router.get('/', async (req, res) => {
 // ── GET /api/transactions/:id ────────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
-    const txn = await queryOne('transactions', t => t.transaction_id === req.params.id);
+    const txn = await queryOne('transactions', t => t.transaction_id === req.params.id, { transaction_id: req.params.id });
     if (!txn) return res.status(404).json({ success: false, error: 'Not found' });
-    const auditLogs     = await queryAll('audit_logs',      l => l.transaction_id === req.params.id, { orderBy: 'created_at', desc: false });
-    const richDecisions = await queryAll('review_decisions', d => d.transaction_id === req.params.id, { orderBy: 'created_at', desc: true });
+    const auditLogs     = await queryAll('audit_logs',       l => l.transaction_id === req.params.id, { where: { transaction_id: req.params.id }, orderBy: 'created_at', desc: false });
+    const richDecisions = await queryAll('review_decisions', d => d.transaction_id === req.params.id, { where: { transaction_id: req.params.id }, orderBy: 'created_at', desc: true });
     const returnCode    = txn.return_reason_code
-      ? await queryOne('return_codes', r => r.code === txn.return_reason_code) : null;
+      ? await queryOne('return_codes', r => r.code === txn.return_reason_code, { code: txn.return_reason_code }) : null;
     res.json({ success: true, data: { ...txn, audit_logs: auditLogs, review_decisions: richDecisions, return_code_info: returnCode } });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -120,11 +122,18 @@ router.post('/', async (req, res) => {
       payee_name:                 body.payee_name || null,
       ach_filter_type:            body.ach_filter_type || null,
       authorized_company_ids:     body.authorized_company_ids || [],
+      originator_email:           body.originator_email || null,
       originator: 'API',
     };
     const todayStr = new Date().toISOString().split('T')[0];
-    const dbCount = (await queryAll('transactions', t => t.company_id === txn.company_id && t.effective_date === todayStr)).length;
-    const isDbDuplicate = txn.trace_number ? !!(await queryOne('transactions', t => t.trace_number === txn.trace_number)) : false;
+    const dbCount = (await queryAll(
+      'transactions',
+      t => t.company_id === txn.company_id && t.effective_date === todayStr,
+      { where: { company_id: txn.company_id, effective_date: todayStr } }
+    )).length;
+    const isDbDuplicate = txn.trace_number
+      ? !!(await queryOne('transactions', t => t.trace_number === txn.trace_number, { trace_number: txn.trace_number }))
+      : false;
     const check_stale = txn.issued_check_date ? (new Date() - new Date(txn.issued_check_date)) > 90 * 24 * 60 * 60 * 1000 : false;
     const ctx = {
       company_daily_count: dbCount + 1,
@@ -217,7 +226,7 @@ router.post('/:id/decision', authenticate, async (req, res) => {
     const { decision, ...reviewData } = req.body;
     if (!['approve', 'decline'].includes(decision)) return res.status(400).json({ success: false, error: 'decision must be approve or decline' });
 
-    const txn = await queryOne('transactions', t => t.transaction_id === req.params.id);
+    const txn = await queryOne('transactions', t => t.transaction_id === req.params.id, { transaction_id: req.params.id });
     if (!txn) return res.status(404).json({ success: false, error: 'Not found' });
     if (!['under_review','more_info_required','ai_workflow'].includes(txn.status))
       return res.status(409).json({ success: false, error: `Already in status: ${txn.status}` });
@@ -244,8 +253,8 @@ router.post('/:id/decision', authenticate, async (req, res) => {
     ;(async () => {
       try {
         const [companyTransactions, infoRequests] = await Promise.all([
-          queryAll('transactions', t => t.company_id === txn.company_id),
-          queryAll('info_requests', r => r.transaction_id === txn.transaction_id, { orderBy: 'created_at', desc: false }),
+          queryAll('transactions', t => t.company_id === txn.company_id, { where: { company_id: txn.company_id } }),
+          queryAll('info_requests', r => r.transaction_id === txn.transaction_id, { where: { transaction_id: txn.transaction_id }, orderBy: 'created_at', desc: false }),
         ]);
         const newBrief = await regenerateBriefForOperation(
           txn, riskResult,

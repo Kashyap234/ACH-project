@@ -210,9 +210,11 @@ async function finaliseLifecycle(txn, decision, reviewData, riskResult) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function _updatePatternFromLifecycle(txn, decision, reviewData, riskResult, lifecycle) {
-  // Resubmission deduplication — only the first terminal decision counts
-  const priorDecision  = await queryOne('review_decisions', r => r.transaction_id === txn.transaction_id);
-  const isResubmission = !!priorDecision;
+  // Resubmission deduplication — only the first terminal decision counts.
+  // NOTE: review_decisions is inserted before this function is called, so we check
+  // for > 1 record (the current insert is always present by the time we get here).
+  const allDecisions   = await queryAll('review_decisions', r => r.transaction_id === txn.transaction_id);
+  const isResubmission = allDecisions.length > 1;
 
   const patternHash    = generatePatternHash(txn, riskResult.riskFlags);
   const description    = buildPatternDescription(txn, riskResult.riskFlags);

@@ -1,0 +1,2737 @@
+{
+  "info": {
+    "_postman_id": "ach-triage-v3-complete",
+    "name": "🏦 ACH Payment AI Triage System — Complete Test Suite",
+    "description": "Complete test collection for all API endpoints of the ACH Payment & Positive Pay AI Triage System v3.0.\n\n## How to use:\n1. Set the `baseUrl` variable (default: http://localhost:3001)\n2. Run **01 - Auth / Login** first to auto-set the `authToken` variable\n3. Run folders in order for a full end-to-end test flow\n\n## Variables:\n- `baseUrl`  — API base (http://localhost:3001)\n- `authToken` — auto-filled by login request\n- `txnId`    — auto-filled by create transaction request\n- `jobId`    — auto-filled by bulk upload request\n- `mirToken` — set manually from MIR portal response",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",   "value": "http://localhost:3001", "type": "string" },
+    { "key": "authToken", "value": "",                      "type": "string" },
+    { "key": "txnId",     "value": "",                      "type": "string" },
+    { "key": "jobId",     "value": "",                      "type": "string" },
+    { "key": "mirToken",  "value": "",                      "type": "string" }
+  ],
+  "item": [
+
+    {
+      "name": "00 — Health Check",
+      "item": [
+        {
+          "name": "GET  /api/health",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/health",
+            "description": "Verify server is alive. Check Gemini connection status."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "01 — Auth",
+      "item": [
+        {
+          "name": "POST Login (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('authToken', json.token);",
+                  "  console.log('✅ Token saved:', json.token.slice(0,30) + '...');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"Admin@123\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "Login as admin. Auto-saves JWT token to `authToken` variable."
+          }
+        },
+        {
+          "name": "POST Login — Wrong Password (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"wrongpassword\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "Should return 401 Invalid credentials."
+          }
+        },
+        {
+          "name": "POST Login — Missing Fields (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "Missing password — should return 400."
+          }
+        },
+        {
+          "name": "GET  /api/auth/me — Get current user",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+            "url": "{{baseUrl}}/api/auth/me",
+            "description": "Returns logged-in user profile from JWT."
+          }
+        },
+        {
+          "name": "POST Create User (Admin only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"reviewer_test\",\n  \"full_name\": \"Test Reviewer\",\n  \"email\": \"reviewer@testbank.com\",\n  \"role\": \"reviewer\",\n  \"custom_password\": \"Test@12345\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/create-user",
+            "description": "Admin creates a new user. Roles: reviewer, analyst, admin, supervisor."
+          }
+        },
+        {
+          "name": "POST Create User — Duplicate Username (expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"full_name\": \"Another Admin\",\n  \"email\": \"another@testbank.com\",\n  \"role\": \"admin\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/create-user",
+            "description": "Try to create a user with existing username — expect 409."
+          }
+        },
+        {
+          "name": "GET  List All Users (Admin only)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+            "url": "{{baseUrl}}/api/auth/users",
+            "description": "Admin: list all users in the system."
+          }
+        },
+        {
+          "name": "PATCH Update User Role",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"analyst\",\n  \"is_active\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/users/USR-REPLACE_ME",
+            "description": "Update a user's role or active status. Replace USR-REPLACE_ME with actual user_id."
+          }
+        },
+        {
+          "name": "PATCH Reset User Password",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reset_password\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/users/USR-REPLACE_ME",
+            "description": "Force reset password for a user. New password will be emailed (or logged to console)."
+          }
+        },
+        {
+          "name": "POST Change Own Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"Admin@123\",\n  \"new_password\": \"NewAdmin@456\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/change-password",
+            "description": "Any authenticated user can change their own password."
+          }
+        },
+        {
+          "name": "DELETE User (Admin only)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+            "url": "{{baseUrl}}/api/auth/users/USR-REPLACE_ME",
+            "description": "Permanently delete a user. Cannot delete yourself."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "02 — Transactions",
+      "item": [
+        {
+          "name": "GET  List All Transactions",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"],
+              "query": [
+                { "key": "limit",  "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            },
+            "description": "Paginated list of all transactions."
+          }
+        },
+        {
+          "name": "GET  Filter by Status (under_review)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions?status=under_review",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"],
+              "query": [{ "key": "status", "value": "under_review" }]
+            },
+            "description": "Filter: under_review, auto_approved, approved, declined, more_info_required, ai_workflow"
+          }
+        },
+        {
+          "name": "GET  Filter by Risk Level 3 (High Risk)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions?risk_level=3",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"],
+              "query": [{ "key": "risk_level", "value": "3" }]
+            }
+          }
+        },
+        {
+          "name": "GET  Filter by SEC Code (PPD)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions?sec_code=PPD",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"],
+              "query": [{ "key": "sec_code", "value": "PPD" }]
+            },
+            "description": "SEC codes: PPD, CCD, WEB, TEL, CTX, IAT, ARC, BOC, POP, RCK, POS"
+          }
+        },
+        {
+          "name": "POST Create Transaction — Low Risk PPD (auto-approve expected)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('txnId', json.data.transaction_id);",
+                  "  console.log('✅ Transaction ID saved:', json.data.transaction_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Acme Corporation\",\n  \"company_id\": \"ACMECORP01\",\n  \"amount\": 1500.00,\n  \"account_number\": \"123456789\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"PPD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"PAYROLL\",\n  \"individual_name\": \"John Smith\",\n  \"individual_id_number\": \"EMP-001\",\n  \"effective_date\": \"2026-07-01\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"021000021000001\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions",
+            "description": "Standard PPD payroll debit — low risk, expects auto_approved."
+          }
+        },
+        {
+          "name": "POST Create Transaction — High Risk (large amount + AML flag)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Suspicious Corp LLC\",\n  \"company_id\": \"SUSPCO0001\",\n  \"amount\": 980000.00,\n  \"account_number\": \"987654321\",\n  \"routing_number\": \"026009593\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"credit\",\n  \"entry_description\": \"TRANSFER\",\n  \"individual_name\": \"Unknown Entity\",\n  \"aml_flag\": true,\n  \"sanctions_check_status\": \"pending\",\n  \"ofac_screened\": false,\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions",
+            "description": "High-amount + AML flag — expects Level 3 (under_review)."
+          }
+        },
+        {
+          "name": "POST Create Transaction — IAT (International)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Global Trade Inc\",\n  \"company_id\": \"GLOBALTRD1\",\n  \"amount\": 25000.00,\n  \"account_number\": \"111222333\",\n  \"routing_number\": \"021000089\",\n  \"sec_code\": \"IAT\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRADE\",\n  \"iso_destination_country_code\": \"GB\",\n  \"foreign_exchange_indicator\": \"FF\",\n  \"foreign_exchange_reference\": \"GBP\",\n  \"originator_street\": \"100 Main St\",\n  \"originator_city\": \"New York\",\n  \"originator_state\": \"NY\",\n  \"originator_postal\": \"10001\",\n  \"originator_country\": \"US\",\n  \"receiver_street\": \"10 Downing St\",\n  \"receiver_city\": \"London\",\n  \"receiver_country\": \"GB\",\n  \"gateway_ofac_screening_indicator\": \"1\",\n  \"secondary_ofac_screening_indicator\": \"1\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions",
+            "description": "International ACH Transaction — full IAT fields."
+          }
+        },
+        {
+          "name": "POST Create Transaction — Positive Pay Check",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Vendor Supplies Co\",\n  \"company_id\": \"VENDSUPP01\",\n  \"amount\": 8750.00,\n  \"account_number\": \"555888999\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"ARC\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"CHECK\",\n  \"is_positive_pay\": true,\n  \"check_serial_number\": \"CHK-10042\",\n  \"issued_check_amount\": 8750.00,\n  \"issued_check_date\": \"2026-06-20\",\n  \"payee_name\": \"Vendor Supplies Co\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions",
+            "description": "Positive Pay enabled check transaction."
+          }
+        },
+        {
+          "name": "POST Create Transaction — Prenote (zero dollar)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"New Payroll Client\",\n  \"company_id\": \"NEWPAY0001\",\n  \"amount\": 0.00,\n  \"account_number\": \"444555666\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"PPD\",\n  \"transaction_type\": \"credit\",\n  \"entry_description\": \"PRENOTE\",\n  \"prenote\": true,\n  \"individual_name\": \"New Employee\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions",
+            "description": "Prenote transaction — account validation zero-dollar."
+          }
+        },
+        {
+          "name": "POST Create Transaction — Missing Required Fields (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Incomplete Corp\",\n  \"amount\": 500.00\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions",
+            "description": "Missing company_id, account_number, routing_number — expect 400."
+          }
+        },
+        {
+          "name": "GET  Transaction Detail by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}",
+            "description": "Full detail of a single transaction including audit_logs, review_decisions, return_code_info."
+          }
+        },
+        {
+          "name": "GET  Transaction — Not Found (expect 404)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions/TXN-DOESNOTEXIST",
+            "description": "Should return 404."
+          }
+        },
+        {
+          "name": "GET  Return Codes (NACHA meta)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions/meta/return-codes",
+            "description": "All NACHA return reason codes (R01–R85)."
+          }
+        },
+        {
+          "name": "POST Decision — Approve Transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approve\",\n  \"additional_notes\": \"Verified with account holder — legitimate payroll transaction.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/decision",
+            "description": "Human reviewer approves. Requires Bearer token. Updates status to 'approved'."
+          }
+        },
+        {
+          "name": "POST Decision — Decline Transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"decline\",\n  \"recommended_return_code\": \"R05\",\n  \"additional_notes\": \"Unauthorized debit — account holder disputes transaction.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/decision",
+            "description": "Human reviewer declines with NACHA return code. Updates status to 'declined'."
+          }
+        },
+        {
+          "name": "POST Decision — Invalid value (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"maybe\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/decision",
+            "description": "Invalid decision value — expect 400."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "03 — More Info Requests (MIR Portal)",
+      "item": [
+        {
+          "name": "POST Request More Info (Human)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"AUTHORIZATION_PROOF\",\n  \"message\": \"Please provide written authorization for this ACH debit. We require a copy of the signed agreement or recorded verbal consent with timestamp.\",\n  \"originator_email\": \"21dce006@charusat.edu.in\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/request-info",
+            "description": "Reviewer requests more info. Categories: IDENTITY_VERIFICATION, AUTHORIZATION_PROOF, BUSINESS_PURPOSE_CLARIFICATION, AMOUNT_DISCREPANCY, ACCOUNT_OWNERSHIP, SANCTIONS_REVIEW, DUPLICATE_EXPLANATION, CUSTOM"
+          }
+        },
+        {
+          "name": "POST Request More Info — Invalid Category (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"UNKNOWN_CATEGORY\",\n  \"message\": \"Some message here that is long enough\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/request-info",
+            "description": "Invalid category — expect 400."
+          }
+        },
+        {
+          "name": "POST Request More Info — Short Message (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"CUSTOM\",\n  \"message\": \"Short\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/request-info",
+            "description": "Message too short (< 10 chars) — expect 400."
+          }
+        },
+        {
+          "name": "GET  Info Requests for Transaction",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/info-requests",
+            "description": "List all MIR rounds for a transaction. Portal tokens are masked."
+          }
+        },
+        {
+          "name": "POST Override AI — Human Takes Control",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/override-ai",
+            "description": "When AI workflow is running, human can take over control."
+          }
+        },
+        {
+          "name": "GET  Portal — View Info Request (Public)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/portal/{{mirToken}}",
+            "description": "Public endpoint — originator opens their portal link. Replace {{mirToken}} with actual token from MIR response."
+          }
+        },
+        {
+          "name": "GET  Portal — Invalid Token (expect 404)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/portal/invalidtoken12345",
+            "description": "Should return 404 — invalid token."
+          }
+        },
+        {
+          "name": "POST Portal — Submit Response (Public)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"response_message\": \"We have attached the signed ACH authorization agreement dated June 15, 2026. The transaction was authorized by the account holder John Smith via email confirmation reference #AUTH-2026-0615. Please find the documentation in the portal.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/portal/{{mirToken}}/respond",
+            "description": "Originator submits response to the info request. Public — no auth needed."
+          }
+        },
+        {
+          "name": "POST Portal — Short Response (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"response_message\": \"ok\"\n}"
+            },
+            "url": "{{baseUrl}}/api/portal/{{mirToken}}/respond",
+            "description": "Response message too short (< 5 chars) — expect 400."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "04 — Bulk Upload",
+      "item": [
+        {
+          "name": "POST Bulk Upload — JSON Array",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('jobId', json.job_id);",
+                  "  console.log('✅ Job ID saved:', json.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"json\",\n  \"batch_size\": 5,\n  \"transactions\": [\n    {\n      \"company_name\": \"Bulk Corp A\",\n      \"company_id\": \"BULKCORPA1\",\n      \"amount\": 1200.00,\n      \"account_number\": \"111000111\",\n      \"routing_number\": \"021000021\",\n      \"sec_code\": \"PPD\",\n      \"transaction_type\": \"debit\",\n      \"entry_description\": \"PAYROLL\",\n      \"individual_name\": \"Alice Johnson\",\n      \"trace_number\": \"021000021BULK001\",\n      \"originator_email\": \"21dce006@charusat.edu.in\"\n    },\n    {\n      \"company_name\": \"Bulk Corp B\",\n      \"company_id\": \"BULKCORPB1\",\n      \"amount\": 3400.00,\n      \"account_number\": \"222000222\",\n      \"routing_number\": \"026009593\",\n      \"sec_code\": \"CCD\",\n      \"transaction_type\": \"credit\",\n      \"entry_description\": \"VENDOR\",\n      \"individual_name\": \"Bob Williams\",\n      \"trace_number\": \"026009593BULK002\",\n      \"originator_email\": \"21dce006@charusat.edu.in\"\n    },\n    {\n      \"company_name\": \"Bulk Corp C\",\n      \"company_id\": \"BULKCORPC1\",\n      \"amount\": 750000.00,\n      \"account_number\": \"333000333\",\n      \"routing_number\": \"021000021\",\n      \"sec_code\": \"CCD\",\n      \"transaction_type\": \"debit\",\n      \"entry_description\": \"WIRE\",\n      \"aml_flag\": true,\n      \"individual_name\": \"Charlie Brown\",\n      \"originator_email\": \"21dce006@charusat.edu.in\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/bulk/upload",
+            "description": "Upload multiple transactions as a JSON array. Saves jobId variable."
+          }
+        },
+        {
+          "name": "POST Bulk Upload — CSV Text",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"csv\",\n  \"batch_size\": 10,\n  \"csv_text\": \"company_name,company_id,amount,account_number,routing_number,sec_code,transaction_type,entry_description,individual_name,originator_email\\nCSV Company Alpha,CSVCO0001,2500.00,444000444,021000021,PPD,debit,PAYROLL,David Alpha,21dce006@charusat.edu.in\\nCSV Company Beta,CSVCO0002,8900.50,555000555,026009593,CCD,credit,VENDOR,Eve Beta,21dce006@charusat.edu.in\\nCSV Company Gamma,CSVCO0003,125000.00,666000666,021000021,WEB,debit,PURCHASE,Frank Gamma,21dce006@charusat.edu.in\"\n}"
+            },
+            "url": "{{baseUrl}}/api/bulk/upload",
+            "description": "Upload transactions as CSV text format."
+          }
+        },
+        {
+          "name": "POST Bulk Upload — Empty (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"json\",\n  \"transactions\": []\n}"
+            },
+            "url": "{{baseUrl}}/api/bulk/upload",
+            "description": "Empty transactions array — expect 400."
+          }
+        },
+        {
+          "name": "GET  Job Status by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/bulk/jobs/{{jobId}}",
+            "description": "Poll processing status for a bulk job. Watch: status = queued → running → completed."
+          }
+        },
+        {
+          "name": "GET  All Bulk Jobs",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/bulk/jobs",
+            "description": "List last 20 batch jobs with their stats."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "05 — Analytics",
+      "item": [
+        {
+          "name": "GET  Dashboard Summary",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/analytics/dashboard",
+            "description": "Full dashboard: totals, risk distribution, MIR stats, learning stats, recent activity."
+          }
+        },
+        {
+          "name": "GET  Daily Trends",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/analytics/trends",
+            "description": "Day-by-day breakdown of transaction volumes, risk levels, auto-approval rates."
+          }
+        },
+        {
+          "name": "GET  Risk Rules (sorted by trigger count)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/analytics/rules",
+            "description": "All risk rules with how many times each was triggered."
+          }
+        },
+        {
+          "name": "GET  AI Learning Patterns (Top 20)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/analytics/patterns",
+            "description": "Top 20 learning patterns by decision count. Shows AI confidence scores."
+          }
+        },
+        {
+          "name": "GET  Audit Log (paginated)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/audit?limit=50&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analytics", "audit"],
+              "query": [
+                { "key": "limit",  "value": "50" },
+                { "key": "offset", "value": "0" }
+              ]
+            },
+            "description": "Full audit trail with enriched transaction context."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "06 — Accounts & ACH Filters",
+      "item": [
+        {
+          "name": "GET  List All Accounts",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/accounts",
+            "description": "Returns all bank accounts with their ACH filter configurations."
+          }
+        },
+        {
+          "name": "GET  Account Detail (ACC-001)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/accounts/ACC-001",
+            "description": "Full account detail including filter_rules and check_register."
+          }
+        },
+        {
+          "name": "PUT  Update Account Filter Mode",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filter_mode\": \"allow_list\",\n  \"debit_block\": false,\n  \"cutoff_time\": \"15:00\",\n  \"default_action\": \"return\",\n  \"max_daily_debit\": 150000\n}"
+            },
+            "url": "{{baseUrl}}/api/accounts/ACC-001",
+            "description": "Update account settings. filter_mode: positive_pay, allow_list, block_all, reverse_positive_pay"
+          }
+        },
+        {
+          "name": "PUT  Enable Debit Block (ACC-003)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"debit_block\": true,\n  \"filter_mode\": \"block_all\"\n}"
+            },
+            "url": "{{baseUrl}}/api/accounts/ACC-003",
+            "description": "Block all incoming ACH debits on this account."
+          }
+        },
+        {
+          "name": "POST Add Company to Whitelist",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_id\": \"NEWVENDOR01\",\n  \"company_name\": \"New Trusted Vendor LLC\",\n  \"max_amount\": 50000,\n  \"frequency_limit\": \"monthly\",\n  \"notes\": \"Approved vendor — contract dated 2026-01-01\"\n}"
+            },
+            "url": "{{baseUrl}}/api/accounts/ACC-002/whitelist",
+            "description": "Add a company to the ACH allow list for an account."
+          }
+        },
+        {
+          "name": "POST Whitelist — Missing company_id (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Missing ID Corp\",\n  \"max_amount\": 10000\n}"
+            },
+            "url": "{{baseUrl}}/api/accounts/ACC-002/whitelist",
+            "description": "No company_id — expect 400."
+          }
+        },
+        {
+          "name": "DELETE Remove Company from Whitelist",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/accounts/ACC-002/whitelist/NEWVENDOR01",
+            "description": "Remove a company from the ACH allow list."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "07 — Exception Dashboard",
+      "item": [
+        {
+          "name": "GET  All Exceptions (with countdown)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/exceptions",
+            "description": "Lists all under_review transactions as exceptions with cutoff countdown timers."
+          }
+        },
+        {
+          "name": "GET  Exceptions for Specific Account",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/exceptions?account_id=ACC-001",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "exceptions"],
+              "query": [{ "key": "account_id", "value": "ACC-001" }]
+            },
+            "description": "Filter exceptions by account_id."
+          }
+        },
+        {
+          "name": "POST Exception Decision — PAY",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"pay\",\n  \"reason\": \"Verified with account holder — transaction is legitimate.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/exceptions/{{txnId}}/decide",
+            "description": "Approve (pay) an exception item. decision: pay or return."
+          }
+        },
+        {
+          "name": "POST Exception Decision — RETURN",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"return\",\n  \"reason\": \"Unauthorized debit — account holder has not provided authorization.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/exceptions/{{txnId}}/decide",
+            "description": "Return (decline) an exception item."
+          }
+        },
+        {
+          "name": "POST Exception Decision — Invalid (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"hold\"\n}"
+            },
+            "url": "{{baseUrl}}/api/exceptions/{{txnId}}/decide",
+            "description": "Invalid decision — expect 400."
+          }
+        },
+        {
+          "name": "POST Apply Default Actions to Past-Due Exceptions",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/exceptions/apply-defaults",
+            "description": "Batch-applies default account action (pay/return) to all exceptions past cutoff time."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "08 — Positive Pay (Check Register)",
+      "item": [
+        {
+          "name": "GET  Check Register (ACC-001)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/check-register/ACC-001?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "check-register", "ACC-001"],
+              "query": [
+                { "key": "limit",  "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            },
+            "description": "List issued checks for account ACC-001."
+          }
+        },
+        {
+          "name": "GET  Check Register — Filter by Status (issued)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/check-register/ACC-001?status=issued",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "check-register", "ACC-001"],
+              "query": [{ "key": "status", "value": "issued" }]
+            },
+            "description": "status: issued, matched, voided, exception"
+          }
+        },
+        {
+          "name": "POST Add Single Check to Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"check_serial_number\": \"CHK-20001\",\n  \"issued_amount\": 4500.00,\n  \"payee_name\": \"Office Supplies Inc\",\n  \"issue_date\": \"2026-06-20\",\n  \"memo\": \"Office supplies Q2 2026\"\n}"
+            },
+            "url": "{{baseUrl}}/api/check-register/ACC-001",
+            "description": "Add a new issued check to the positive pay register."
+          }
+        },
+        {
+          "name": "POST Add Check — Duplicate Serial (expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"check_serial_number\": \"CHK-20001\",\n  \"issued_amount\": 4500.00,\n  \"payee_name\": \"Office Supplies Inc\",\n  \"issue_date\": \"2026-06-20\"\n}"
+            },
+            "url": "{{baseUrl}}/api/check-register/ACC-001",
+            "description": "Duplicate check serial — expect 409."
+          }
+        },
+        {
+          "name": "POST Bulk Upload Checks (CSV)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"csv_text\": \"check_serial_number,issued_amount,payee_name,issue_date,memo\\nCHK-30001,1500.00,Staples Inc,2026-06-15,Q2 Supplies\\nCHK-30002,8200.00,Tech Vendor LLC,2026-06-18,Software License\\nCHK-30003,3750.00,Consulting Group,2026-06-19,Consulting Fees\"\n}"
+            },
+            "url": "{{baseUrl}}/api/check-register/ACC-001/bulk",
+            "description": "Bulk add checks via CSV. Headers: check_serial_number, issued_amount, payee_name, issue_date, memo"
+          }
+        },
+        {
+          "name": "POST Match Check — Full Match",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"check_serial_number\": \"CHK-20001\",\n  \"amount\": 4500.00,\n  \"payee_name\": \"Office Supplies Inc\"\n}"
+            },
+            "url": "{{baseUrl}}/api/check-register/ACC-001/match",
+            "description": "Match a presented check against register. Returns FULL_MATCH, AMOUNT_MISMATCH, PAYEE_MISMATCH, STALE_DATED, or SERIAL_NOT_FOUND."
+          }
+        },
+        {
+          "name": "POST Match Check — Amount Mismatch",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"check_serial_number\": \"CHK-20001\",\n  \"amount\": 9999.00,\n  \"payee_name\": \"Office Supplies Inc\"\n}"
+            },
+            "url": "{{baseUrl}}/api/check-register/ACC-001/match",
+            "description": "Amount doesn't match — expect AMOUNT_MISMATCH result."
+          }
+        },
+        {
+          "name": "POST Match Check — Serial Not Found",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"check_serial_number\": \"CHK-FAKE999\",\n  \"amount\": 1000.00,\n  \"payee_name\": \"Unknown Payee\"\n}"
+            },
+            "url": "{{baseUrl}}/api/check-register/ACC-001/match",
+            "description": "Serial number not in register — expect SERIAL_NOT_FOUND."
+          }
+        },
+        {
+          "name": "PUT  Void a Check",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Lost in mail — reissued as CHK-20002\"\n}"
+            },
+            "url": "{{baseUrl}}/api/check-register/ACC-001/1/void",
+            "description": "Void a check by check_id (database row ID). Replace '1' with actual check record ID."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "09 — Edge Cases & Error Scenarios",
+      "item": [
+        {
+          "name": "GET  404 — Unknown Route",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/nonexistent-route",
+            "description": "Should return 404 with {success: false, error: 'GET /api/nonexistent-route not found'}"
+          }
+        },
+        {
+          "name": "POST Decision — No Auth Token (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approve\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/decision",
+            "description": "No Authorization header — should return 401."
+          }
+        },
+        {
+          "name": "POST Decision — Expired/Invalid Token (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.INVALID.TOKEN" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approve\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/decision",
+            "description": "Malformed JWT token — expect 401."
+          }
+        },
+        {
+          "name": "POST Create User — Non-Admin Role (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"reviewer2\",\n  \"full_name\": \"Test Reviewer 2\",\n  \"email\": \"reviewer2@testbank.com\",\n  \"role\": \"reviewer\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/create-user",
+            "description": "Login as reviewer first, then call this — should 403 (admin only)."
+          }
+        },
+        {
+          "name": "POST Request Info — Already Decided Txn (expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"CUSTOM\",\n  \"message\": \"Please provide additional documentation for this transaction.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{txnId}}/request-info",
+            "description": "Try requesting info on an already-approved/declined transaction — expect 409."
+          }
+        },
+        {
+          "name": "POST Portal Respond — Already Responded (expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"response_message\": \"Trying to respond again to the same portal link.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/portal/{{mirToken}}/respond",
+            "description": "Submit a second response to same portal link — expect 409 (already responded)."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "10 — Pattern Promotion, Demotion & AI Autonomous Workflow",
+      "description": "Tests the entire AI Learning Pipeline lifecycle:\n\nPROMOTION PATH:\n  ≥5 decisions on the same pattern type + confidence ≥85% → _promotePattern() fires\n  → workflow_playbook is built → future transactions run autonomous AI workflow\n\nDEMOTION PATH:\n  After promotion, if confidence drops < 70% → _demotePattern() fires\n  → promoted_to_level1 = false, workflow_playbook = null\n\nAUTONOMOUS WORKFLOW PATH (ai_workflow status):\n  New txn matches promoted pattern → runAutonomousWorkflow() starts\n  → AI sends MIR portal → originator responds → evaluateOriginatorResponse() → AI approve/decline/escalate\n\nHOW TO RUN:\n  These calls simulate real human decisions on the same transaction 'type'.\n  The system groups by: sec_code + transaction_type + amount_bucket + risk_flags + account_type.\n  Run steps in order. After 5 'approve' decisions, the pattern will auto-promote.",
+      "item": [
+        {
+          "name": "── STEP 1: Check Current Learning State ──",
+          "item": [
+            {
+              "name": "GET  Analytics Dashboard (baseline)",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/analytics/dashboard",
+                "description": "Record baseline: totalPatterns, promotedPatterns, autonomousPatterns before the test."
+              }
+            },
+            {
+              "name": "GET  All Learning Patterns (before)",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/analytics/patterns",
+                "description": "See which patterns exist and their current confidence scores before testing."
+              }
+            },
+            {
+              "name": "GET  Audit Log — Filter Pattern Events (before)",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/api/analytics/audit?limit=100",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "analytics", "audit"],
+                  "query": [{ "key": "limit", "value": "100" }]
+                },
+                "description": "Look for any existing pattern_promoted or pattern_demoted events in the audit log."
+              }
+            }
+          ]
+        },
+        {
+          "name": "── STEP 2: Seed the Pattern (5 identical-type decisions) ──",
+          "description": "Create 5 transactions of the same 'pattern type': same sec_code=CCD, transaction_type=debit, amount bucket=small (500–5000), account_type=checking, no flags.\nApprove each one. After 5 approvals, confidence_score ≥ 0.85 → PROMOTION fires automatically.",
+          "item": [
+            {
+              "name": "POST Create Pattern Txn #1 (CCD debit small)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('patternTxn1', j.data.transaction_id);",
+                      "  console.log('Pattern Txn 1:', j.data.transaction_id, '| Status:', j.data.status);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Pattern Training Corp\",\n  \"company_id\": \"PATTRN0001\",\n  \"amount\": 2500.00,\n  \"account_number\": \"800100001\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRAINING\",\n  \"individual_name\": \"Test User One\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"PATTEST0000001\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Pattern seed #1 — CCD debit $2,500 (small bucket). Same pattern fingerprint as #2–#5."
+              }
+            },
+            {
+              "name": "POST Approve Pattern Txn #1",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Legitimate vendor debit — authorization on file.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"identity_verification_method\": \"signed_agreement\",\n  \"counterparty_type\": \"BUSINESS\",\n  \"business_purpose\": \"regular_vendor_payment\",\n  \"authorization_reviewed\": true,\n  \"additional_notes\": \"Pattern seed decision 1 of 5\",\n  \"time_to_decide_seconds\": 120\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{patternTxn1}}/decision",
+                "description": "Approve #1 with HIGH confidence. This feeds into the learning pipeline and pattern confidence score."
+              }
+            },
+            {
+              "name": "POST Create Pattern Txn #2 (CCD debit small)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('patternTxn2', j.data.transaction_id);",
+                      "  console.log('Pattern Txn 2:', j.data.transaction_id, '| Status:', j.data.status);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Pattern Training Corp\",\n  \"company_id\": \"PATTRN0001\",\n  \"amount\": 3100.00,\n  \"account_number\": \"800100002\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRAINING\",\n  \"individual_name\": \"Test User Two\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"PATTEST0000002\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Pattern seed #2 — same fingerprint (CCD debit, small bucket, checking)."
+              }
+            },
+            {
+              "name": "POST Approve Pattern Txn #2",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Verified vendor authorization.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"counterparty_type\": \"BUSINESS\",\n  \"business_purpose\": \"regular_vendor_payment\",\n  \"additional_notes\": \"Pattern seed decision 2 of 5\",\n  \"time_to_decide_seconds\": 95\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{patternTxn2}}/decision",
+                "description": "Approve #2 — confidence score rises."
+              }
+            },
+            {
+              "name": "POST Create Pattern Txn #3 (CCD debit small)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('patternTxn3', j.data.transaction_id);",
+                      "  console.log('Pattern Txn 3:', j.data.transaction_id, '| Status:', j.data.status);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Pattern Training Corp\",\n  \"company_id\": \"PATTRN0001\",\n  \"amount\": 1800.00,\n  \"account_number\": \"800100003\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRAINING\",\n  \"individual_name\": \"Test User Three\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"PATTEST0000003\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Pattern seed #3."
+              }
+            },
+            {
+              "name": "POST Approve Pattern Txn #3",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Amount within expected range for vendor.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"counterparty_type\": \"BUSINESS\",\n  \"business_purpose\": \"regular_vendor_payment\",\n  \"additional_notes\": \"Pattern seed decision 3 of 5\",\n  \"time_to_decide_seconds\": 110\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{patternTxn3}}/decision",
+                "description": "Approve #3 — 3 decisions recorded."
+              }
+            },
+            {
+              "name": "POST Create Pattern Txn #4 (CCD debit small)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('patternTxn4', j.data.transaction_id);",
+                      "  console.log('Pattern Txn 4:', j.data.transaction_id, '| Status:', j.data.status);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Pattern Training Corp\",\n  \"company_id\": \"PATTRN0001\",\n  \"amount\": 4200.00,\n  \"account_number\": \"800100004\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRAINING\",\n  \"individual_name\": \"Test User Four\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"PATTEST0000004\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Pattern seed #4."
+              }
+            },
+            {
+              "name": "POST Approve Pattern Txn #4",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Standard CCD debit — all checks passed.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"counterparty_type\": \"BUSINESS\",\n  \"business_purpose\": \"regular_vendor_payment\",\n  \"additional_notes\": \"Pattern seed decision 4 of 5\",\n  \"time_to_decide_seconds\": 88\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{patternTxn4}}/decision",
+                "description": "Approve #4 — 4 decisions recorded."
+              }
+            },
+            {
+              "name": "POST Create Pattern Txn #5 — THE CRITICAL ONE",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('patternTxn5', j.data.transaction_id);",
+                      "  console.log('Pattern Txn 5:', j.data.transaction_id, '| Status:', j.data.status);",
+                      "  console.log('After approving this one, the pattern should PROMOTE (5 decisions >= 85% confidence)');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Pattern Training Corp\",\n  \"company_id\": \"PATTRN0001\",\n  \"amount\": 2900.00,\n  \"account_number\": \"800100005\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRAINING\",\n  \"individual_name\": \"Test User Five\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"PATTEST0000005\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Pattern seed #5 — after approving this, 5 total decisions at HIGH confidence → auto-promotion fires!"
+              }
+            },
+            {
+              "name": "POST Approve Pattern Txn #5 → TRIGGERS PROMOTION",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Fifth consecutive approval of same pattern — meets promotion criteria.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"identity_verification_method\": \"signed_agreement\",\n  \"counterparty_type\": \"BUSINESS\",\n  \"business_purpose\": \"regular_vendor_payment\",\n  \"authorization_reviewed\": true,\n  \"additional_notes\": \"Pattern seed decision 5 of 5 — promotion expected after this\",\n  \"time_to_decide_seconds\": 102\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{patternTxn5}}/decision",
+                "description": "🚀 PROMOTION TRIGGER: After this 5th HIGH-confidence approve, _promotePattern() fires automatically.\nCheck the audit log immediately after — look for event_type: 'pattern_promoted'."
+              }
+            }
+          ]
+        },
+        {
+          "name": "── STEP 3: Verify Promotion ──",
+          "item": [
+            {
+              "name": "GET  Audit Log — Verify 'pattern_promoted' Event",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/api/analytics/audit?limit=20",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "analytics", "audit"],
+                  "query": [{ "key": "limit", "value": "20" }]
+                },
+                "description": "✅ EXPECTED: event_type='pattern_promoted' in the top results.\nEvent summary: '🚀 Pattern XXXX promoted — autonomous workflow enabled (85%+ confidence, 5 decisions)'"
+              }
+            },
+            {
+              "name": "GET  Analytics Dashboard (after promotion)",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/analytics/dashboard",
+                "description": "✅ EXPECTED: promotedPatterns count increased by 1, autonomousPatterns count increased by 1."
+              }
+            },
+            {
+              "name": "GET  Learning Patterns — Check promoted_to_level1=true",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/analytics/patterns",
+                "description": "✅ EXPECTED: The CCD debit small pattern now has: promoted_to_level1=true, workflow_playbook not null, promotion_date set."
+              }
+            }
+          ]
+        },
+        {
+          "name": "── STEP 4: AI Autonomous Workflow (Post-Promotion) ──",
+          "description": "Now create a NEW transaction of the same type. Because the pattern is promoted, this transaction goes into 'ai_workflow' status instead of 'under_review'. The AI will autonomously send MIR requests.",
+          "item": [
+            {
+              "name": "POST Create Txn Matching Promoted Pattern → ai_workflow",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('aiWorkflowTxn', j.data.transaction_id);",
+                      "  console.log('AI Workflow Txn:', j.data.transaction_id);",
+                      "  console.log('Expected status: ai_workflow | Actual:', j.data.status);",
+                      "  if (j.data.status === 'ai_workflow') {",
+                      "    console.log('✅ AI autonomous workflow started!');",
+                      "  } else if (j.data.status === 'auto_approved') {",
+                      "    console.log('⚡ Auto-approved (no MIR playbook needed for this risk score)');",
+                      "  }",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Pattern Training Corp\",\n  \"company_id\": \"PATTRN0001\",\n  \"amount\": 3500.00,\n  \"account_number\": \"800100099\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRAINING\",\n  \"individual_name\": \"New Beneficiary\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"PATTEST0099999\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Same pattern fingerprint → matches promoted pattern.\n✅ EXPECTED response message: '🤖 AI autonomous workflow started — originator will be contacted'\n✅ EXPECTED status: 'ai_workflow'"
+              }
+            },
+            {
+              "name": "GET  AI Workflow Transaction Detail",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/transactions/{{aiWorkflowTxn}}",
+                "description": "✅ EXPECTED: status='ai_workflow', ai_workflow_pattern= pattern hash, ai_human_override=false.\nAudit logs should show: ai_workflow_queued → ai_workflow_started → ai_info_requested"
+              }
+            },
+            {
+              "name": "GET  AI Workflow MIR Info Requests",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": "{{baseUrl}}/api/transactions/{{aiWorkflowTxn}}/info-requests",
+                "description": "✅ EXPECTED: At least one info_request with actor_type='AI_AUTOMATION'. Portal token is masked (••••••••)."
+              }
+            },
+            {
+              "name": "POST Human Override — Stop AI, Take Control",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": "{{baseUrl}}/api/transactions/{{aiWorkflowTxn}}/override-ai",
+                "description": "Human reviewer takes over from AI workflow.\n✅ EXPECTED: ai_human_override=true, status flipped to 'under_review'.\nAudit log: event_type='human_override'"
+              }
+            }
+          ]
+        },
+        {
+          "name": "── STEP 5: Trigger Demotion ──",
+          "description": "To demote a promoted pattern, we need confidence to fall below 70%.\nThis means consecutive DECLINE decisions on the same pattern type, using MEDIUM/LOW reviewer confidence.\nAfter enough decline decisions, confidence_score < 0.70 → _demotePattern() fires.",
+          "item": [
+            {
+              "name": "POST Create Pattern Txn for Demotion #1",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('demotionTxn1', j.data.transaction_id);",
+                      "  console.log('Demotion Txn 1:', j.data.transaction_id, '| Status:', j.data.status);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Pattern Training Corp\",\n  \"company_id\": \"PATTRN0001\",\n  \"amount\": 2200.00,\n  \"account_number\": \"800200001\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRAINING\",\n  \"individual_name\": \"Demotion Test One\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"DEMTEST0000001\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Same pattern as promoted — will enter ai_workflow. We'll override and then decline."
+              }
+            },
+            {
+              "name": "POST Override AI on Demotion Txn #1",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": "{{baseUrl}}/api/transactions/{{demotionTxn1}}/override-ai",
+                "description": "Take manual control so we can issue a human decline decision."
+              }
+            },
+            {
+              "name": "POST DECLINE Demotion Txn #1 — LOW confidence",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"decline\",\n  \"decision_reason\": \"Suspicious activity — originator could not verify authorization.\",\n  \"reviewer_confidence\": \"LOW\",\n  \"recommended_return_code\": \"R05\",\n  \"fraud_indicators\": [\"unauthorized_debit\", \"no_authorization_on_file\"],\n  \"counterparty_type\": \"BUSINESS\",\n  \"business_purpose\": \"unknown\",\n  \"additional_notes\": \"Demotion seed decision — LOW confidence decline\",\n  \"time_to_decide_seconds\": 200\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{demotionTxn1}}/decision",
+                "description": "Decline with LOW reviewer_confidence (weight=0.4). This reduces approve_weight relative to decline_weight, lowering confidence_score."
+              }
+            },
+            {
+              "name": "POST Create Pattern Txn for Demotion #2",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('demotionTxn2', j.data.transaction_id);",
+                      "  console.log('Demotion Txn 2:', j.data.transaction_id, '| Status:', j.data.status);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Pattern Training Corp\",\n  \"company_id\": \"PATTRN0001\",\n  \"amount\": 3300.00,\n  \"account_number\": \"800200002\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRAINING\",\n  \"individual_name\": \"Demotion Test Two\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"DEMTEST0000002\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Demotion seed #2."
+              }
+            },
+            {
+              "name": "POST Override AI on Demotion Txn #2",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": "{{baseUrl}}/api/transactions/{{demotionTxn2}}/override-ai",
+                "description": "Human takes over from AI."
+              }
+            },
+            {
+              "name": "POST DECLINE Demotion Txn #2 — LOW confidence",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"decline\",\n  \"decision_reason\": \"Repeated suspicious pattern — second consecutive decline.\",\n  \"reviewer_confidence\": \"LOW\",\n  \"recommended_return_code\": \"R10\",\n  \"fraud_indicators\": [\"unauthorized_debit\", \"pattern_mismatch\"],\n  \"counterparty_type\": \"BUSINESS\",\n  \"business_purpose\": \"unknown\",\n  \"additional_notes\": \"Demotion seed decision 2\",\n  \"time_to_decide_seconds\": 185\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{demotionTxn2}}/decision",
+                "description": "Second LOW-confidence decline. Confidence formula: approveW / (approveW + declineW).\nWith 5 HIGH approves (weight=5.0) and 2 LOW declines (weight=0.8), confidence = 5.0/5.8 ≈ 86% → still above 70%.\nKeep adding declines until confidence < 70% to trigger demotion."
+              }
+            },
+            {
+              "name": "GET  Pattern Confidence After Declines",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/analytics/patterns",
+                "description": "Check current confidence_score. If < 0.70, 'pattern_demoted' event should be in audit log.\nFormula: approve_weight / (approve_weight + decline_weight). HIGH=1.0, MEDIUM=0.7, LOW=0.4"
+              }
+            },
+            {
+              "name": "GET  Audit Log — Check for 'pattern_demoted' Event",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/api/analytics/audit?limit=20",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "analytics", "audit"],
+                  "query": [{ "key": "limit", "value": "20" }]
+                },
+                "description": "✅ EXPECTED (if confidence < 0.70): event_type='pattern_demoted'\nEvent summary: '⬇️ Pattern XXXX DEMOTED — autonomous workflow disabled (confidence: XX%)'\n\nIf not yet demoted: add more LOW-confidence decline decisions until confidence drops below 70%."
+              }
+            }
+          ]
+        },
+        {
+          "name": "── STEP 6: Verify Demotion Effects ──",
+          "item": [
+            {
+              "name": "POST Create Txn After Demotion — Should NOT trigger ai_workflow",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 201) {",
+                      "  const j = pm.response.json();",
+                      "  console.log('Status after demotion:', j.data.status);",
+                      "  if (j.data.status === 'under_review') {",
+                      "    console.log('✅ Demotion confirmed — pattern no longer triggers autonomous workflow');",
+                      "  } else if (j.data.status === 'ai_workflow') {",
+                      "    console.log('❌ Pattern still promoted — need more decline decisions');",
+                      "  } else if (j.data.status === 'auto_approved') {",
+                      "    console.log('⚡ Auto-approved due to low risk score');",
+                      "  }",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Pattern Training Corp\",\n  \"company_id\": \"PATTRN0001\",\n  \"amount\": 2750.00,\n  \"account_number\": \"800300001\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"TRAINING\",\n  \"individual_name\": \"Post Demotion Test\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"POSTDEM000001\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "After demotion, the same pattern type should:\n✅ EXPECTED: status='under_review' (human review required again)\n❌ NOT EXPECTED: status='ai_workflow' (autonomous workflow disabled after demotion)"
+              }
+            },
+            {
+              "name": "GET  Final Learning Stats Summary",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/analytics/dashboard",
+                "description": "Final state check:\n- promotedPatterns: should be same as before (demotion removed 1)\n- autonomousPatterns: should have decreased\n- The demoted pattern: promoted_to_level1=false, demotion_count incremented, workflow_playbook=null"
+              }
+            }
+          ]
+        },
+        {
+          "name": "── STEP 7: Edge Cases & Negative Tests ──",
+          "item": [
+            {
+              "name": "POST Decision with MEDIUM confidence (weight=0.7)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Transaction appears legitimate with moderate certainty.\",\n  \"reviewer_confidence\": \"MEDIUM\",\n  \"identity_verified\": false,\n  \"counterparty_type\": \"BUSINESS\",\n  \"business_purpose\": \"vendor_payment\",\n  \"additional_notes\": \"MEDIUM confidence — contributes 0.7 weight to pattern confidence\",\n  \"time_to_decide_seconds\": 300\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{txnId}}/decision",
+                "description": "MEDIUM confidence (weight=0.7) approve — contributes less to pattern confidence than HIGH (1.0).\nReplace {{txnId}} with an under_review transaction."
+              }
+            },
+            {
+              "name": "POST Decision with LOW confidence (weight=0.4)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"decline\",\n  \"decision_reason\": \"Uncertain — partial information only.\",\n  \"reviewer_confidence\": \"LOW\",\n  \"recommended_return_code\": \"R03\",\n  \"fraud_indicators\": [\"insufficient_documentation\"],\n  \"counterparty_type\": \"UNKNOWN\",\n  \"business_purpose\": \"unknown\",\n  \"additional_notes\": \"LOW confidence — contributes 0.4 weight, minimal demotion pressure\",\n  \"time_to_decide_seconds\": 450\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{txnId}}/decision",
+                "description": "LOW confidence (weight=0.4) decline — minimal impact on pattern demotion. Takes many more to demote."
+              }
+            },
+            {
+              "name": "GET  Resubmission Guard — Same Txn Second Decision (expect 409)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Trying to re-decide an already decided transaction.\",\n  \"reviewer_confidence\": \"HIGH\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions/{{patternTxn1}}/decision",
+                "description": "Try to approve an already-approved transaction.\n✅ EXPECTED: 409 Conflict — 'Already in status: approved'\nLearning pipeline guard: resubmission deduplication ensures only the FIRST terminal decision counts."
+              }
+            },
+            {
+              "name": "GET  Pattern Stats After Full Test",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/analytics/patterns",
+                "description": "Final pattern state. Verify:\n- total_decisions count\n- approve_count / decline_count\n- confidence_score\n- promoted_to_level1 flag\n- demotion_count\n- workflow_playbook (null if demoted)"
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "11 — MIR + Pattern Learning Full E2E Flow",
+      "description": "End-to-end scenario: Create high-risk transaction → request info → originator responds → human decides → pattern learns from MIR lifecycle.\nThis tests that MIR rounds (request+response steps) are captured in the lifecycle and included in learned_qa_pairs for the workflow_playbook.",
+      "item": [
+        {
+          "name": "POST Create High-Risk Txn for MIR+Learning E2E",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const j = pm.response.json();",
+                  "  pm.collectionVariables.set('e2eTxn', j.data.transaction_id);",
+                  "  console.log('E2E Txn:', j.data.transaction_id, '| Status:', j.data.status);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"E2E Learning Corp\",\n  \"company_id\": \"E2ELEARN01\",\n  \"amount\": 45000.00,\n  \"account_number\": \"900100001\",\n  \"routing_number\": \"026009593\",\n  \"sec_code\": \"CCD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"CONTRACT\",\n  \"individual_name\": \"E2E Test User\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"E2ETEST0000001\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions",
+            "description": "$45,000 CCD debit (large bucket) — likely Level 2 or 3 → under_review. We'll do a full MIR round."
+          }
+        },
+        {
+          "name": "POST Request Info — AUTHORIZATION_PROOF",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"AUTHORIZATION_PROOF\",\n  \"message\": \"Please provide the signed ACH authorization agreement for this $45,000 debit transaction. Include the date of authorization, authorized signatory name, and reference number from the agreement.\",\n  \"originator_email\": \"21dce006@charusat.edu.in\"\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{e2eTxn}}/request-info",
+            "description": "Round 1 MIR — AUTHORIZATION_PROOF. This records a lifecycle step and builds learned_qa_pairs."
+          }
+        },
+        {
+          "name": "GET  Portal Link from Info Requests",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+            "url": "{{baseUrl}}/api/transactions/{{e2eTxn}}/info-requests",
+            "description": "Get the MIR round details. The portal_token is masked, but the portal_url is logged on the server.\nCopy the token from server console logs to set {{mirToken}} variable."
+          }
+        },
+        {
+          "name": "POST Portal Respond — Originator Submits Proof",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"response_message\": \"We are attaching the signed ACH debit authorization agreement dated May 15, 2026. The authorized signatory is CFO Jane Doe (signature on file). Reference number: AUTH-2026-0515-CCD. This is a quarterly contract payment per agreement #CONTRACT-Q2-2026 with a value of $45,000 covering services rendered in Q2 2026.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/portal/{{mirToken}}/respond",
+            "description": "Originator responds with detailed authorization proof.\nThis records a lifecycle response step. Status flips to under_review.\nSet {{mirToken}} from server console output or MIR info-requests response."
+          }
+        },
+        {
+          "name": "POST Approve with Full Review Data — Finalizes Lifecycle",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Authorization proof received and verified — signed agreement on file, CFO signature confirmed.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"identity_verification_method\": \"signed_agreement\",\n  \"counterparty_type\": \"BUSINESS\",\n  \"account_ownership_confirmed\": true,\n  \"business_purpose\": \"contract_payment\",\n  \"authorization_reviewed\": true,\n  \"authorization_type_confirmed\": \"written\",\n  \"customer_contacted\": true,\n  \"customer_contact_outcome\": \"confirmed_authorization\",\n  \"additional_notes\": \"E2E test — MIR lifecycle with 1 round and final HIGH-confidence approval\",\n  \"time_to_decide_seconds\": 3600\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions/{{e2eTxn}}/decision",
+            "description": "Final decision with full reviewer data.\n✅ This triggers: finaliseLifecycle() → _updatePatternFromLifecycle() → learned_qa_pairs updated with request+response.\nThe new Q&A pair (AUTHORIZATION_PROOF request + originator response) is added to the pattern's training data."
+          }
+        },
+        {
+          "name": "GET  Transaction Detail — Full Audit Trail",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions/{{e2eTxn}}",
+            "description": "Complete transaction history including audit_logs and review_decisions.\n✅ EXPECTED audit log events in order:\n1. transaction_created\n2. ai_processed\n3. info_requested (Round 1)\n4. originator_response_submitted\n5. transaction_resubmitted\n6. human_approved"
+          }
+        },
+        {
+          "name": "GET  Pattern — Verify MIR Q&A Pair Recorded",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/analytics/patterns",
+            "description": "After completing the E2E flow, find the pattern for CCD debit large bucket.\n✅ EXPECTED: learned_qa_pairs contains the new entry with:\n  - category: 'AUTHORIZATION_PROOF'\n  - message_template: (the request message)\n  - response_example: (the originator response)\n  - final_outcome: 'approve'\n✅ mir_count incremented, avg_rounds_to_resolve updated."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "12 — 🎬 AI AUTONOMOUS MIR DEMO (Watch AI Work Live)",
+      "description": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🎬  LIVE AI DEMO — More Info Required (Fully Autonomous)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nThis folder is a complete, self-contained DEMO that shows:\n\n  1️⃣  Pattern already learned from 5 prior human approvals (seeded here)\n  2️⃣  New transaction arrives → AI recognises the pattern\n  3️⃣  AI AUTOMATICALLY sends a More Info Request to the originator\n  4️⃣  Originator opens the portal link and submits their response\n  5️⃣  AI evaluates the response using Gemini LLM + learned examples\n  6️⃣  AI makes final decision: APPROVE / DECLINE / ask again\n  7️⃣  Full audit trail proves every AI action\n\nNO HUMAN REVIEWER IS NEEDED IN STEPS 3–6. The AI does it all.\n\nRUN ORDER: Execute requests top-to-bottom. Watch the server console\nfor 🤖 AI_AUTOMATION log lines in real time.\n\nNOTE: Steps A1-A5 seed the pattern (run once). Steps B onwards are\nthe live demo you repeat to see the AI in action.",
+      "item": [
+
+        {
+          "name": "━━ PHASE A: Teach AI the MIR Pattern (5 Full Cycles — Run Once) ━━",
+          "description": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🎓 TEACHING THE AI — MIR-FIRST PATTERN\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nFor each of the 5 seed transactions, do the COMPLETE MIR lifecycle:\n\n  1. CREATE transaction\n  2. HUMAN requests info (AUTHORIZATION_PROOF)\n  3. ORIGINATOR responds with strong authorization details via portal\n  4. HUMAN approves after seeing the good response\n\nWhy this matters:\n  ❌ OLD (wrong): direct approve → AI learns 'just approve'\n  ✅ NEW (correct): request MIR → get good response → approve\n     → AI learns: 'for this pattern, always ask for AUTHORIZATION_PROOF\n       and approve when a strong signed-agreement response is given'\n\nAfter 5 cycles, the workflow_playbook will contain:\n  round 1: { category: AUTHORIZATION_PROOF, expected_decision: approve }\n\nWhen the AI runs autonomously later, it will EXACTLY replicate\nthis human behaviour — ask for proof, evaluate, approve/decline.\n\n⏱ EACH SEED TAKES ~4 API CALLS. Total: ~20 calls for full training.\n\n📌 PORTAL TOKEN: After each 'Request Info' call, check your server\nconsole for the portal link. Copy the token into {{mirTokenSeedN}}.",
+          "item": [
+
+            {
+              "name": "──── 🌱 SEED #1 ────",
+              "item": [
+                {
+                  "name": "A1a › Create Seed #1 (PPD debit $3,200)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===201){",
+                          "  const id = pm.response.json().data.transaction_id;",
+                          "  pm.collectionVariables.set('demoSeed1', id);",
+                          "  console.log('🌱 Seed #1 created:', id, '| Status:', pm.response.json().data.status);",
+                          "  console.log('👉 Next: run A1b to request info from originator.');",
+                          "}"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"company_name\": \"Demo Vendor Solutions\",\n  \"company_id\": \"DEMOVEND01\",\n  \"amount\": 3200.00,\n  \"account_number\": \"701100001\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"PPD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"SERVICES\",\n  \"individual_name\": \"Seed User One\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"DEMOSEED0001\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions",
+                    "description": "Pattern fingerprint: PPD + debit + small bucket ($500–$5k) + checking + no flags.\nAll 5 seeds share this exact fingerprint so the AI groups them together."
+                  }
+                },
+                {
+                  "name": "A1b › Human Requests AUTHORIZATION_PROOF (Seed #1)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===200||pm.response.code===201){",
+                          "  console.log('');",
+                          "  console.log('📨 Info requested for Seed #1');",
+                          "  console.log('📌 CHECK SERVER CONSOLE for the portal link.');",
+                          "  console.log('   Copy the token → set {{mirTokenSeed1}} in Postman variables.');",
+                          "  console.log('   Then run A1c.');",
+                          "}"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"category\": \"AUTHORIZATION_PROOF\",\n  \"message\": \"Please provide the signed ACH authorization agreement for this PPD services debit. Include the authorization date, signatory name, and reference number.\",\n  \"originator_email\": \"21dce006@charusat.edu.in\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed1}}/request-info",
+                    "description": "🎓 TEACHING STEP: The human reviewer decides to always ask for AUTHORIZATION_PROOF for this transaction type.\nThis request + originator response is recorded in the lifecycle → stored in learned_qa_pairs.\nAfter 5 repetitions, AI learns: 'for PPD small debits, ask AUTHORIZATION_PROOF first'.\n\n📌 After this call: check server console for:\n  ╔══ MIR PORTAL LINK ══╗\n  Link: http://localhost:5173/portal/TOKEN_HERE\nCopy TOKEN_HERE → Postman Variables → mirTokenSeed1"
+                  }
+                },
+                {
+                  "name": "A1c › Originator Responds via Portal (Seed #1)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===200){",
+                          "  console.log('✅ Seed #1 — originator responded.');",
+                          "  console.log('   Transaction is back to under_review.');",
+                          "  console.log('   Run A1d to approve it (completing the MIR cycle).');",
+                          "}"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"response_message\": \"We confirm this PPD debit is fully authorized. The signed ACH authorization agreement was executed on May 10, 2026, reference AUTH-SEED1-2026. Authorized signatory: CFO James Rivera. This is a monthly service fee per contract #SVC-PPD-2026. Amount $3,200 matches the agreed monthly fee.\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/portal/{{mirTokenSeed1}}/respond",
+                    "description": "📌 Set {{mirTokenSeed1}} before running.\n\n🎓 TEACHING: This strong response (contains 'authorized', 'agreement', 'signed', >20 words)\nis stored as a learned example in the pattern's learned_qa_pairs.\nWhen AI evaluates responses later, it compares against this template.\n\nThis response WILL lead to approval → AI learns: strong auth proof → approve."
+                  }
+                },
+                {
+                  "name": "A1d › Human Approves After MIR (Seed #1) ← LEARNING RECORDED HERE",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===200){",
+                          "  console.log('');",
+                          "  console.log('✅ Seed #1 COMPLETE — 1/5 MIR cycles trained');",
+                          "  console.log('   Pattern now has: 1 decision, 1 MIR round, 1 Q&A pair');",
+                          "  console.log('   Proceed to Seed #2.');",
+                          "}"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Signed authorization agreement received and verified — CFO signature confirmed, reference number on file.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"identity_verification_method\": \"signed_agreement\",\n  \"counterparty_type\": \"BUSINESS\",\n  \"account_ownership_confirmed\": true,\n  \"business_purpose\": \"service_payment\",\n  \"authorization_reviewed\": true,\n  \"authorization_type_confirmed\": \"written\",\n  \"customer_contacted\": true,\n  \"customer_contact_outcome\": \"confirmed_authorization\",\n  \"additional_notes\": \"MIR cycle 1 of 5 — authorization proof collected and verified\",\n  \"time_to_decide_seconds\": 180\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed1}}/decision",
+                    "description": "🎓 THIS IS THE KEY LEARNING MOMENT.\n\nfinaliseLifecycle() runs → _updatePatternFromLifecycle() runs → stores:\n  learned_qa_pairs[0] = {\n    round: 1,\n    category: 'AUTHORIZATION_PROOF',\n    message_template: (the request message),\n    response_example: (the originator's response),\n    final_outcome: 'approve',\n    led_to_decision: true\n  }\n\nThis Q&A pair becomes the AI's training example for future transactions."
+                  }
+                }
+              ]
+            },
+
+            {
+              "name": "──── 🌱 SEED #2 ────",
+              "item": [
+                {
+                  "name": "A2a › Create Seed #2 (PPD debit $2,800)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===201){",
+                          "  pm.collectionVariables.set('demoSeed2', pm.response.json().data.transaction_id);",
+                          "  console.log('🌱 Seed #2 created:', pm.response.json().data.transaction_id);",
+                          "}"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"company_name\": \"Demo Vendor Solutions\",\n  \"company_id\": \"DEMOVEND01\",\n  \"amount\": 2800.00,\n  \"account_number\": \"701100002\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"PPD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"SERVICES\",\n  \"individual_name\": \"Seed User Two\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"DEMOSEED0002\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions",
+                    "description": "Same pattern fingerprint — seed #2. Different amount ($2,800) but same bucket."
+                  }
+                },
+                {
+                  "name": "A2b › Request AUTHORIZATION_PROOF (Seed #2)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "console.log('📌 Seed #2: Check server console → copy token → set {{mirTokenSeed2}}')"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"category\": \"AUTHORIZATION_PROOF\",\n  \"message\": \"We require the signed authorization agreement for this $2,800 PPD services debit. Please provide the authorization date, authorized signatory, and agreement reference number.\",\n  \"originator_email\": \"21dce006@charusat.edu.in\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed2}}/request-info",
+                    "description": "Same category (AUTHORIZATION_PROOF) as Seed #1 — pattern reinforced.\nCopy portal token from server console → {{mirTokenSeed2}}"
+                  }
+                },
+                {
+                  "name": "A2c › Originator Responds (Seed #2)",
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"response_message\": \"This transaction is authorized under our standing services agreement dated March 1, 2026, reference AUTH-SEED2-2026. Signatory: COO Priya Nair. The $2,800 debit covers monthly platform services per contract #SVC-Q1-2026. Authorization is on file and can be provided upon request.\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/portal/{{mirTokenSeed2}}/respond",
+                    "description": "📌 Set {{mirTokenSeed2}} from server console.\nStrong response — 'authorized', 'agreement', 'signed', 'contract', >20 words."
+                  }
+                },
+                {
+                  "name": "A2d › Human Approves (Seed #2) ← 2nd Q&A Pair Learned",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===200){ console.log('✅ Seed #2 COMPLETE — 2/5 MIR cycles trained'); }"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Authorization agreement verified — COO signature on file, contract reference confirmed.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"identity_verification_method\": \"signed_agreement\",\n  \"counterparty_type\": \"BUSINESS\",\n  \"account_ownership_confirmed\": true,\n  \"business_purpose\": \"service_payment\",\n  \"authorization_reviewed\": true,\n  \"authorization_type_confirmed\": \"written\",\n  \"customer_contacted\": true,\n  \"customer_contact_outcome\": \"confirmed_authorization\",\n  \"additional_notes\": \"MIR cycle 2 of 5\",\n  \"time_to_decide_seconds\": 160\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed2}}/decision"
+                  }
+                }
+              ]
+            },
+
+            {
+              "name": "──── 🌱 SEED #3 ────",
+              "item": [
+                {
+                  "name": "A3a › Create Seed #3 (PPD debit $4,100)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===201){ pm.collectionVariables.set('demoSeed3', pm.response.json().data.transaction_id); console.log('🌱 Seed #3:', pm.response.json().data.transaction_id); }"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"company_name\": \"Demo Vendor Solutions\",\n  \"company_id\": \"DEMOVEND01\",\n  \"amount\": 4100.00,\n  \"account_number\": \"701100003\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"PPD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"SERVICES\",\n  \"individual_name\": \"Seed User Three\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"DEMOSEED0003\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions"
+                  }
+                },
+                {
+                  "name": "A3b › Request AUTHORIZATION_PROOF (Seed #3)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "console.log('📌 Seed #3: Copy token from server console → {{mirTokenSeed3}}')"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"category\": \"AUTHORIZATION_PROOF\",\n  \"message\": \"For this $4,100 PPD services debit, please provide the signed authorization document including the date signed, authorized representative name, and agreement reference number.\",\n  \"originator_email\": \"21dce006@charusat.edu.in\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed3}}/request-info"
+                  }
+                },
+                {
+                  "name": "A3c › Originator Responds (Seed #3)",
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"response_message\": \"This $4,100 debit is authorized under agreement AUTH-SEED3-2026 signed June 5, 2026 by VP Finance David Chen. This is a services payment under contract #SVC-PPD-Q2-2026. We confirm the authorization is valid and the amount matches our invoice INV-2026-0605.\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/portal/{{mirTokenSeed3}}/respond",
+                    "description": "📌 Set {{mirTokenSeed3}}. Pattern: strong Q&A example #3 stored."
+                  }
+                },
+                {
+                  "name": "A3d › Human Approves (Seed #3) ← 3rd Q&A Pair",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===200){ console.log('✅ Seed #3 COMPLETE — 3/5 MIR cycles trained'); }"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Authorization verified — VP Finance signature and invoice reference confirmed.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"identity_verification_method\": \"signed_agreement\",\n  \"counterparty_type\": \"BUSINESS\",\n  \"account_ownership_confirmed\": true,\n  \"business_purpose\": \"service_payment\",\n  \"authorization_reviewed\": true,\n  \"authorization_type_confirmed\": \"written\",\n  \"customer_contacted\": true,\n  \"customer_contact_outcome\": \"confirmed_authorization\",\n  \"additional_notes\": \"MIR cycle 3 of 5\",\n  \"time_to_decide_seconds\": 200\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed3}}/decision"
+                  }
+                }
+              ]
+            },
+
+            {
+              "name": "──── 🌱 SEED #4 ────",
+              "item": [
+                {
+                  "name": "A4a › Create Seed #4 (PPD debit $1,950)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===201){ pm.collectionVariables.set('demoSeed4', pm.response.json().data.transaction_id); console.log('🌱 Seed #4:', pm.response.json().data.transaction_id); }"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"company_name\": \"Demo Vendor Solutions\",\n  \"company_id\": \"DEMOVEND01\",\n  \"amount\": 1950.00,\n  \"account_number\": \"701100004\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"PPD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"SERVICES\",\n  \"individual_name\": \"Seed User Four\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"DEMOSEED0004\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions"
+                  }
+                },
+                {
+                  "name": "A4b › Request AUTHORIZATION_PROOF (Seed #4)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "console.log('📌 Seed #4: Copy token → {{mirTokenSeed4}}')"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"category\": \"AUTHORIZATION_PROOF\",\n  \"message\": \"Please provide the authorization documentation for this $1,950 PPD debit transaction including the signed agreement date, authorized signatory, and transaction reference.\",\n  \"originator_email\": \"21dce006@charusat.edu.in\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed4}}/request-info"
+                  }
+                },
+                {
+                  "name": "A4c › Originator Responds (Seed #4)",
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"response_message\": \"Authorization for this $1,950 PPD debit is confirmed under agreement AUTH-SEED4-2026 signed April 20, 2026. Authorized signatory is Director of Finance Lisa Thompson. This payment is for monthly support services under contract #SUPP-2026-04. Reference invoice INV-2026-0420.\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/portal/{{mirTokenSeed4}}/respond",
+                    "description": "📌 Set {{mirTokenSeed4}}. 4th Q&A training example."
+                  }
+                },
+                {
+                  "name": "A4d › Human Approves (Seed #4) ← 4th Q&A Pair",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===200){ console.log('✅ Seed #4 COMPLETE — 4/5 MIR cycles trained. One more to go!'); }"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"Finance Director signature on file — authorization documentation complete.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"identity_verification_method\": \"signed_agreement\",\n  \"counterparty_type\": \"BUSINESS\",\n  \"account_ownership_confirmed\": true,\n  \"business_purpose\": \"service_payment\",\n  \"authorization_reviewed\": true,\n  \"authorization_type_confirmed\": \"written\",\n  \"customer_contacted\": true,\n  \"customer_contact_outcome\": \"confirmed_authorization\",\n  \"additional_notes\": \"MIR cycle 4 of 5\",\n  \"time_to_decide_seconds\": 150\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed4}}/decision"
+                  }
+                }
+              ]
+            },
+
+            {
+              "name": "──── 🌱 SEED #5 — FINAL CYCLE → 🚀 PROMOTES AFTER THIS ────",
+              "item": [
+                {
+                  "name": "A5a › Create Seed #5 (PPD debit $3,700) — LAST SEED",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===201){",
+                          "  pm.collectionVariables.set('demoSeed5', pm.response.json().data.transaction_id);",
+                          "  console.log('🌱 Seed #5 (FINAL):', pm.response.json().data.transaction_id);",
+                          "  console.log('   After approving this one, the pattern PROMOTES!');",
+                          "}"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"company_name\": \"Demo Vendor Solutions\",\n  \"company_id\": \"DEMOVEND01\",\n  \"amount\": 3700.00,\n  \"account_number\": \"701100005\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"PPD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"SERVICES\",\n  \"individual_name\": \"Seed User Five\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"DEMOSEED0005\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions",
+                    "description": "5th and final seed. After completing the MIR cycle for this one → PROMOTION fires!"
+                  }
+                },
+                {
+                  "name": "A5b › Request AUTHORIZATION_PROOF (Seed #5 — Final)",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "console.log('📌 Seed #5 (FINAL): Copy token → {{mirTokenSeed5}}')"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"category\": \"AUTHORIZATION_PROOF\",\n  \"message\": \"Please provide the signed authorization agreement for this $3,700 PPD services debit. We need the authorization date, signatory name, and agreement reference to process this transaction.\",\n  \"originator_email\": \"21dce006@charusat.edu.in\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed5}}/request-info"
+                  }
+                },
+                {
+                  "name": "A5c › Originator Responds (Seed #5 — Final)",
+                  "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"response_message\": \"This $3,700 PPD debit is authorized under signed agreement AUTH-SEED5-2026 executed June 15, 2026. Authorized signatory is CEO Mark Anderson. This is the final payment under contract #SVC-ANNUAL-2026 for professional services rendered. All documentation including the signed agreement is available upon request.\"\n}"
+                    },
+                    "url": "{{baseUrl}}/api/portal/{{mirTokenSeed5}}/respond",
+                    "description": "📌 Set {{mirTokenSeed5}}. This is the 5th and final Q&A training example."
+                  }
+                },
+                {
+                  "name": "A5d › Human Approves (Seed #5) → 🚀 PATTERN PROMOTES NOW",
+                  "event": [
+                    {
+                      "listen": "test",
+                      "script": {
+                        "exec": [
+                          "if(pm.response.code===200){",
+                          "  console.log('');",
+                          "  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                          "  console.log('🚀 5th MIR CYCLE COMPLETE — PATTERN SHOULD PROMOTE!');",
+                          "  console.log('');",
+                          "  console.log('What the AI has learned:');",
+                          "  console.log('  • Pattern: PPD debit, small bucket, checking');",
+                          "  console.log('  • Always ask: AUTHORIZATION_PROOF');",
+                          "  console.log('  • Good response: contains signed agreement + signatory + ref number');",
+                          "  console.log('  • Decision after good response: APPROVE');",
+                          "  console.log('  • learned_qa_pairs: 5 examples');",
+                          "  console.log('');",
+                          "  console.log('Run A6 → confirm promotion, then go to Phase B for live demo.');",
+                          "  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                          "}"
+                        ],
+                        "type": "text/javascript"
+                      }
+                    }
+                  ],
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {"key": "Content-Type", "value": "application/json"},
+                      {"key": "Authorization", "value": "Bearer {{authToken}}"}
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"decision\": \"approve\",\n  \"decision_reason\": \"CEO authorization confirmed — signed agreement and contract reference verified. 5th completed MIR cycle for this pattern.\",\n  \"reviewer_confidence\": \"HIGH\",\n  \"identity_verified\": true,\n  \"identity_verification_method\": \"signed_agreement\",\n  \"counterparty_type\": \"BUSINESS\",\n  \"account_ownership_confirmed\": true,\n  \"business_purpose\": \"service_payment\",\n  \"authorization_reviewed\": true,\n  \"authorization_type_confirmed\": \"written\",\n  \"customer_contacted\": true,\n  \"customer_contact_outcome\": \"confirmed_authorization\",\n  \"additional_notes\": \"MIR cycle 5 of 5 — PROMOTION EXPECTED after this decision\",\n  \"time_to_decide_seconds\": 170\n}"
+                    },
+                    "url": "{{baseUrl}}/api/transactions/{{demoSeed5}}/decision",
+                    "description": "🚀 THIS TRIGGERS PROMOTION.\n\nfinaliseLifecycle() → _updatePatternFromLifecycle()\ntotal_decisions=5, confidence≥0.85 → _promotePattern() fires\n\nworkflow_playbook is now built from 5 Q&A pairs:\n  round 1: {\n    category: 'AUTHORIZATION_PROOF',\n    message_template: (best of 5 templates),\n    pct_led_to_decision: 100%,\n    expected_decision: 'approve'\n  }\n\nServer console:\n  🚀 Pattern XXXXXXXX PROMOTED — autonomous workflow active\n  Confidence: 85%+ | Decisions: 5 | Avg MIR rounds: 1"
+                  }
+                }
+              ]
+            },
+
+            {
+              "name": "A6 › ✅ Confirm Promotion — Verify Playbook Contains MIR Round",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const j = pm.response.json();",
+                      "const patterns = j.data || [];",
+                      "const promoted = patterns.filter(p => p.promoted_to_level1 === true);",
+                      "console.log('');",
+                      "console.log('📊 PROMOTION CHECK');",
+                      "console.log('  Total patterns:', patterns.length);",
+                      "console.log('  Promoted patterns:', promoted.length);",
+                      "if(promoted.length > 0){",
+                      "  const p = promoted[0];",
+                      "  pm.collectionVariables.set('promotedPatternHash', p.pattern_hash);",
+                      "  console.log('  ✅ Pattern hash:', p.pattern_hash);",
+                      "  console.log('  Confidence:', Math.round(p.confidence_score*100)+'%');",
+                      "  console.log('  Decisions:', p.total_decisions);",
+                      "  console.log('  MIR count:', p.mir_count, '(should be 5)');",
+                      "  console.log('  Avg MIR rounds:', p.avg_rounds_to_resolve);",
+                      "  console.log('  QA pairs:', (p.learned_qa_pairs||[]).length, '(should be 5)');",
+                      "  const pb = p.workflow_playbook;",
+                      "  if(pb){",
+                      "    console.log('');",
+                      "    console.log('🤖 WORKFLOW PLAYBOOK BUILT:');",
+                      "    console.log('  Expected rounds:', pb.expected_rounds);",
+                      "    console.log('  Expected decision:', pb.expected_decision);",
+                      "    console.log('  Approval rate:', Math.round(pb.approval_rate*100)+'%');",
+                      "    (pb.rounds||[]).forEach(r => {",
+                      "      console.log('  Round', r.round, ':', r.category, '→', r.pct_led_to_decision+'% led to decision');",
+                      "    });",
+                      "  } else {",
+                      "    console.log('  ⚠️ No playbook yet — pattern may need more decisions');",
+                      "  }",
+                      "} else {",
+                      "  console.log('  ❌ No promoted pattern — re-check that all 5 seeds were approved');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/analytics/patterns",
+                "description": "✅ EXPECTED AFTER TRAINING:\n  promoted_to_level1 = true\n  confidence_score ≥ 0.85\n  total_decisions = 5\n  mir_count = 5        ← AI knows 5 MIR rounds happened\n  avg_rounds_to_resolve = 1.0\n  learned_qa_pairs = 5 entries (one per seed MIR cycle)\n\n  workflow_playbook = {\n    expected_rounds: 1,\n    expected_decision: 'approve',\n    approval_rate: 1.0,\n    rounds: [\n      { round: 1, category: 'AUTHORIZATION_PROOF', pct_led_to_decision: 100% }\n    ]\n  }\n\nThis playbook is EXACTLY what the AI will replay autonomously in Phase B."
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "━━ PHASE B: 🎬 THE LIVE DEMO (Repeat this anytime) ━━",
+          "description": "Phase A only needs to run once.\nFrom here, this is the REPEATABLE DEMO you show to anyone.\n\nWhat will happen:\n  • You submit a new transaction of the SAME type\n  • AI detects the promoted pattern INSTANTLY\n  • AI changes status to 'ai_workflow'\n  • AI generates and sends a More Info Request automatically\n  • You (playing the originator) respond via the portal\n  • AI evaluates your response using Gemini + learned examples\n  • AI approves or asks for more — NO HUMAN REVIEWER NEEDED",
+          "item": [
+            {
+              "name": "B1 › 📨 Submit New Transaction — AI Will Handle It",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if(pm.response.code===201){",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('demoLiveTxn', j.data.transaction_id);",
+                      "  console.log('');",
+                      "  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                      "  console.log('📨 NEW TRANSACTION SUBMITTED');",
+                      "  console.log('  ID     :', j.data.transaction_id);",
+                      "  console.log('  Status :', j.data.status);",
+                      "  console.log('  Message:', j.message);",
+                      "  console.log('');",
+                      "  if(j.data.status === 'ai_workflow'){",
+                      "    console.log('🤖 AI AUTONOMOUS WORKFLOW STARTED!');",
+                      "    console.log('   The AI is now sending a More Info Request...');",
+                      "    console.log('   Watch server console for 🤖 AI_AUTOMATION lines');",
+                      "  } else if(j.data.status === 'auto_approved'){",
+                      "    console.log('⚡ Auto-approved (risk score too low for MIR)');",
+                      "    console.log('   Try increasing the amount or add aml_flag:true');",
+                      "  }",
+                      "  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Demo Vendor Solutions\",\n  \"company_id\": \"DEMOVEND01\",\n  \"amount\": 2600.00,\n  \"account_number\": \"701199001\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"PPD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"SERVICES\",\n  \"individual_name\": \"Live Demo User\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"DEMOLIVE00001\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Same fingerprint as seeded pattern:\n  sec_code = PPD\n  transaction_type = debit\n  amount = $2,600 (small bucket: $500–$5,000)\n  account_type = checking\n  risk_flags = none\n\n🤖 WHAT HAPPENS NEXT (automatically, on the server):\n  1. checkPatternMatch() finds the promoted pattern\n  2. Transaction saved with status = 'ai_workflow'\n  3. runAutonomousWorkflow() fires asynchronously\n  4. AI picks round 1 from workflow_playbook\n  5. AI generates a tailored request message via Gemini\n  6. recordAutoMirRequest() creates the portal link\n  7. Portal email would be sent (if RESEND_API_KEY set)\n\nServer console lines to watch for:\n  🤖 AI_AUTOMATION: Starting autonomous workflow for DEMO...\n  🤖 AI_AUTOMATION: Round 1 sent — AUTHORIZATION_PROOF"
+              }
+            },
+            {
+              "name": "B2 › 👁 Watch Transaction Enter ai_workflow",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const j = pm.response.json();",
+                      "const txn = j.data;",
+                      "console.log('');",
+                      "console.log('🔍 TRANSACTION STATE AFTER SUBMISSION');",
+                      "console.log('  Status          :', txn.status);",
+                      "console.log('  AI Pattern Hash :', txn.ai_workflow_pattern || 'none');",
+                      "console.log('  Human Override  :', txn.ai_human_override);",
+                      "console.log('  AI Brief        :', (txn.ai_brief||'').slice(0,80)+'...');",
+                      "console.log('');",
+                      "const logs = txn.audit_logs || [];",
+                      "console.log('📋 Audit Log Events so far:');",
+                      "logs.forEach(l => console.log('  •', l.event_type, '|', l.actor));",
+                      "console.log('');",
+                      "console.log('⏳ Wait 2–3 seconds, then run B3 to see the AI MIR request.');"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/transactions/{{demoLiveTxn}}",
+                "description": "📊 CHECK WHAT TO EXPECT:\n  status          = 'ai_workflow'\n  ai_workflow_pattern = (pattern hash from Phase A)\n  ai_human_override   = false\n\n📋 Audit log events you'll see:\n  • transaction_created  (SYSTEM)\n  • ai_workflow_queued   (AI)\n  • ai_workflow_started  (AI_AUTOMATION) ← async, may appear shortly\n  • ai_info_requested    (AI_AUTOMATION) ← AI sent the MIR portal!\n\n⏳ TIP: The autonomous workflow fires asynchronously.\nWait 2–3 seconds after B1, then run B3 to see the AI's MIR request."
+              }
+            },
+            {
+              "name": "B3 › 🤖 See What the AI Asked the Originator",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const j = pm.response.json();",
+                      "const rounds = j.data || [];",
+                      "console.log('');",
+                      "console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                      "console.log('🤖 AI MORE INFO REQUESTS');",
+                      "console.log('  Total rounds:', rounds.length);",
+                      "console.log('');",
+                      "rounds.forEach(r => {",
+                      "  console.log('  ─── Round', r.round_number, '───');",
+                      "  console.log('  Actor    :', r.actor_type);",
+                      "  console.log('  Category :', r.category);",
+                      "  console.log('  Message  :', (r.message||'').slice(0,150));",
+                      "  console.log('  Status   :', r.status);",
+                      "  console.log('  Token    :', r.portal_token);  // masked ••••••••",
+                      "  console.log('');",
+                      "});",
+                      "if(rounds.length === 0){",
+                      "  console.log('  ⏳ No MIR rounds yet. Wait 2s and retry B3.');",
+                      "} else {",
+                      "  console.log('✅ AI sent the request! actor_type should be AI_AUTOMATION');",
+                      "  console.log('📌 To get the real portal token: check server console for the link');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [{"key": "Authorization", "value": "Bearer {{authToken}}"}],
+                "url": "{{baseUrl}}/api/transactions/{{demoLiveTxn}}/info-requests",
+                "description": "🤖 THIS IS THE AI'S MIR REQUEST — created with zero human input.\n\n✅ EXPECTED in the response:\n  actor_type     = 'AI_AUTOMATION'   ← NOT 'HUMAN'\n  category       = from workflow_playbook (e.g. AUTHORIZATION_PROOF)\n  message        = AI-generated via Gemini (tailored to this transaction)\n  status         = 'pending'\n  portal_token   = '••••••••' (masked in API, real token in server console)\n\n📌 HOW TO GET THE PORTAL TOKEN:\n  Look at your server console output for a line like:\n    ╔══ MIR PORTAL LINK ══╗\n    Link: http://localhost:5173/portal/abc123...\n  Copy that token (the long hex after /portal/) into {{mirToken}} variable."
+              }
+            },
+            {
+              "name": "B3b › ⏳ Wait & Retry — If AI Round Not Yet Visible",
+              "request": {
+                "method": "GET",
+                "header": [{"key": "Authorization", "value": "Bearer {{authToken}}"}],
+                "url": "{{baseUrl}}/api/transactions/{{demoLiveTxn}}/info-requests",
+                "description": "The AI fires asynchronously. If B3 showed 0 rounds, wait 3 seconds and run this.\nKeep retrying until actor_type='AI_AUTOMATION' appears.\n\nNormal timing:\n  • Gemini API available: ~2–4 seconds\n  • Simulation mode (no API key): ~1 second"
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "━━ PHASE C: 📮 Originator Responds to AI's Request ━━",
+          "description": "You are now playing the role of the ORIGINATOR (the company that submitted the transaction).\nThe AI has sent you a portal link. You open it and submit your response.\nThe AI will then AUTOMATICALLY evaluate your answer.",
+          "item": [
+            {
+              "name": "C1 › 🔗 Open the Portal Link (as Originator)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const j = pm.response.json();",
+                      "if(pm.response.code === 200){",
+                      "  const req = j.data;",
+                      "  console.log('');",
+                      "  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                      "  console.log('🔗 ORIGINATOR OPENED PORTAL LINK');",
+                      "  console.log('  Request ID  :', req.request_id);",
+                      "  console.log('  Round       :', req.round_number);",
+                      "  console.log('  Category    :', req.category);",
+                      "  console.log('  Message     :', (req.message||'').slice(0,200));",
+                      "  console.log('  Expires     :', req.token_expires_at);",
+                      "  console.log('  SLA Deadline:', req.sla_deadline_at);",
+                      "  console.log('');",
+                      "  console.log('Transaction Summary:');",
+                      "  const txn = req.transaction;",
+                      "  console.log(' ', txn.company_name, '| $'+txn.amount, '|', txn.sec_code, txn.transaction_type);",
+                      "  console.log('  Account:', txn.account_number_masked);",
+                      "  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                      "} else if(pm.response.code === 404){",
+                      "  console.log('❌ Invalid token — copy correct token from server console');",
+                      "} else if(pm.response.code === 410){",
+                      "  console.log('❌ Token expired (72h limit). Re-run the demo.');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/portal/{{mirToken}}",
+                "description": "📌 BEFORE RUNNING:\n  Set {{mirToken}} to the actual token from your server console.\n  Look for this in console:\n    ╔══ MIR PORTAL LINK ══╗\n    Link: http://localhost:5173/portal/TOKEN_HERE\n  Copy the TOKEN_HERE part → Postman Variables → mirToken\n\nThis is the same link the AI emailed to the originator.\n✅ EXPECTED: 200 OK with the AI's question and masked transaction details.\nAlso marks link_opened_at timestamp and writes audit log event: portal_link_opened"
+              }
+            },
+            {
+              "name": "C2 › 📝 Submit Response — Strong Authorization Proof",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const j = pm.response.json();",
+                      "console.log('');",
+                      "console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                      "console.log('📝 ORIGINATOR RESPONSE SUBMITTED');",
+                      "console.log('  Status:', pm.response.code);",
+                      "console.log('  Message:', j.message);",
+                      "console.log('');",
+                      "console.log('🤖 AI IS NOW EVALUATING THE RESPONSE...');",
+                      "console.log('  evaluateOriginatorResponse() firing on server');",
+                      "console.log('  AI reads response + learned examples from pattern');",
+                      "console.log('  Gemini decides: approve / decline / more_info');",
+                      "console.log('');",
+                      "console.log('⏳ Wait 3–5 seconds, then run C3 to see AI decision.');",
+                      "console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"response_message\": \"We confirm this ACH debit is fully authorized. The signed authorization agreement was executed on June 1, 2026, reference number AUTH-DEMOVEND-2026-001, signed by our CFO Sarah Mitchell. This is a recurring monthly services payment per contract #SVC-2026-Q2. All documentation is on file with our bank and available upon request. The transaction amount of $2,600 matches the agreed monthly service fee.\"\n}"
+                },
+                "url": "{{baseUrl}}/api/portal/{{mirToken}}/respond",
+                "description": "📮 ORIGINATOR submits a STRONG response with:\n  ✅ Authorization confirmation\n  ✅ Reference number\n  ✅ Signatory name\n  ✅ Contract reference\n  ✅ Amount confirmation\n  ✅ Word count > 20 (heuristic pass)\n  ✅ Contains 'authorized', 'agreement', 'signed'\n\n🤖 WHAT AI DOES NEXT (automatically):\n  1. evaluateOriginatorResponse() is called\n  2. Gemini LLM reads the response + learned examples from pattern\n  3. Heuristic fallback (if no API key): checks keywords + word count\n  4. Decides: approve / decline / more_info\n  5. If approve: transaction status → 'approved', AI_AUTOMATION reviewer\n  6. Audit log: event_type = 'ai_auto_approved'\n\nWith a strong response like this, AI should APPROVE automatically."
+              }
+            },
+            {
+              "name": "C2b › 📝 Alternative: Submit Weak Response (triggers more_info)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"response_message\": \"Yes it is fine please approve this.\"\n}"
+                },
+                "url": "{{baseUrl}}/api/portal/{{mirToken}}/respond",
+                "description": "📮 WEAK RESPONSE — too short, no keywords.\n\n🤖 What AI will likely do:\n  Heuristic check: word count < 10 → action = 'more_info'\n  AI sends ANOTHER portal round asking for more details.\n\nUse C2 (strong) OR C2b (weak) — not both.\nIf you use C2b, run B3 again to see the AI's follow-up question."
+              }
+            },
+            {
+              "name": "C2c › 📝 Alternative: Submit Fraud/Dispute Response (triggers decline)",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"response_message\": \"We did not authorize this transaction. This is fraud. We never submitted this ACH debit and do not recognize the account number. Please reverse this immediately.\"\n}"
+                },
+                "url": "{{baseUrl}}/api/portal/{{mirToken}}/respond",
+                "description": "📮 FRAUD/DISPUTE RESPONSE — contains deny keywords.\n\n🤖 What AI will likely do:\n  Heuristic detects: 'not authorized', 'fraud', 'never submitted'\n  → action = 'decline', confidence = 0.85\n  AI declines the transaction automatically.\n  Audit log: event_type = 'ai_auto_declined'\n\nUse C2 OR C2b OR C2c — pick one scenario."
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "━━ PHASE D: 🏁 See the AI's Final Decision ━━",
+          "description": "After the originator responded, the AI evaluated it and made a decision.\nCheck the transaction status now — the AI acted as the reviewer.",
+          "item": [
+            {
+              "name": "D1 › 🏁 See Final Transaction Status (AI Decision)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const j = pm.response.json();",
+                      "const txn = j.data;",
+                      "console.log('');",
+                      "console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                      "console.log('🏁 FINAL TRANSACTION STATE');",
+                      "console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');",
+                      "console.log('  Transaction ID  :', txn.transaction_id);",
+                      "console.log('  STATUS          :', txn.status, txn.status==='approved'?'✅':txn.status==='declined'?'❌':'⏳');",
+                      "console.log('  Reviewer Name   :', txn.reviewer_name || 'pending...');",
+                      "console.log('  Reviewer Notes  :', (txn.reviewer_notes||'').slice(0,100));",
+                      "console.log('  Decision At     :', txn.decision_at || 'not yet');",
+                      "console.log('');",
+                      "console.log('📋 Full Audit Trail:');",
+                      "const logs = txn.audit_logs || [];",
+                      "logs.forEach((l,i) => {",
+                      "  const icon = l.actor==='AI_AUTOMATION'?'🤖':l.actor==='AI'?'🧠':l.actor==='ORIGINATOR'?'📨':'👤';",
+                      "  console.log('  '+icon+' ['+l.event_type+'] '+l.actor+' | '+(l.event_summary||'').slice(0,80));",
+                      "});",
+                      "console.log('');",
+                      "if(txn.status === 'approved' && txn.reviewer_name === 'AI Automation'){",
+                      "  console.log('🎉 DEMO SUCCESS! AI approved the transaction autonomously.');",
+                      "  console.log('   No human reviewer was involved.');",
+                      "} else if(txn.status === 'declined' && txn.reviewer_name === 'AI Automation'){",
+                      "  console.log('🎉 DEMO SUCCESS! AI declined the transaction autonomously.');",
+                      "} else if(txn.status === 'more_info_required'){",
+                      "  console.log('🔄 AI asked for another round. Go back and respond via new portal link.');",
+                      "} else if(txn.status === 'ai_workflow'){",
+                      "  console.log('⏳ AI is still evaluating. Wait 3s and re-run D1.');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/transactions/{{demoLiveTxn}}",
+                "description": "🏁 THE MOMENT OF TRUTH.\n\n✅ If AI approved (C2 strong response):\n  status          = 'approved'\n  reviewer_name   = 'AI Automation'   ← AI was the reviewer!\n  reviewer_notes  = 'AI_AUTOMATION: (reason)'\n  audit_log shows: ai_auto_approved\n\n❌ If AI declined (C2c fraud response):\n  status          = 'declined'\n  reviewer_name   = 'AI Automation'\n  audit_log shows: ai_auto_declined\n\n🔄 If AI needs more info (C2b weak response):\n  status          = 'more_info_required'\n  New MIR round created by AI_AUTOMATION\n  Run B3 again to see the follow-up question\n\n📋 The audit trail is the full story:\n  transaction_created  → SYSTEM\n  ai_workflow_queued   → AI\n  ai_workflow_started  → AI_AUTOMATION  \n  ai_info_requested    → AI_AUTOMATION  (AI sent MIR)\n  portal_link_opened   → ORIGINATOR\n  originator_response_submitted → ORIGINATOR\n  ai_auto_approved     → AI_AUTOMATION  (AI decided!)\n\n↑ Zero human reviewer actions in that chain."
+              }
+            },
+            {
+              "name": "D2 › 📊 See AI Decision in Review Decisions Table",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/transactions/{{demoLiveTxn}}",
+                "description": "In the response, look at the review_decisions array:\n\n✅ EXPECTED:\n  decision        = 'approve' or 'decline'\n  reviewer_confidence = 'HIGH'\n  confidence_weight   = 1.0\n  ai_automation   = true   ← KEY FIELD: confirms AI made this decision\n  decision_reason = 'AI_AUTOMATION: (Gemini reasoning)'\n\nThis record feeds back into the learning pipeline,\nfurther reinforcing the pattern's confidence score."
+              }
+            },
+            {
+              "name": "D3 › 📈 Check Pattern Updated After AI Decision",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const j = pm.response.json();",
+                      "const patterns = (j.data||[]).filter(p=>p.promoted_to_level1);",
+                      "if(patterns.length > 0){",
+                      "  const p = patterns[0];",
+                      "  console.log('');",
+                      "  console.log('📈 PATTERN STATS AFTER DEMO');",
+                      "  console.log('  Hash          :', p.pattern_hash);",
+                      "  console.log('  Total Decisions:', p.total_decisions);",
+                      "  console.log('  Approve Count  :', p.approve_count);",
+                      "  console.log('  Decline Count  :', p.decline_count);",
+                      "  console.log('  Confidence     :', Math.round(p.confidence_score*100)+'%');",
+                      "  console.log('  MIR Count      :', p.mir_count);",
+                      "  console.log('  Avg Rounds     :', p.avg_rounds_to_resolve);",
+                      "  console.log('  QA Pairs       :', (p.learned_qa_pairs||[]).length);",
+                      "  console.log('');",
+                      "  console.log('✅ Pattern learned from this demo run!');",
+                      "  console.log('   Next demo will use this Q&A pair as an example.');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/api/analytics/patterns",
+                "description": "After the demo, the pattern should have:\n  total_decisions = 6 (5 seeds + 1 AI decision)\n  mir_count incremented (AI sent 1 MIR round)\n  avg_rounds_to_resolve updated\n  learned_qa_pairs has new entry:\n    - category: (what AI asked)\n    - response_example: (what originator said)\n    - final_outcome: 'approve' or 'decline'\n    - led_to_decision: true\n\nThis Q&A pair will be used as an example in the NEXT demo run,\nmaking the AI smarter with every cycle."
+              }
+            },
+            {
+              "name": "D4 › 📋 Full Audit Log — Entire AI Workflow Story",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/api/analytics/audit?limit=15",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "analytics", "audit"],
+                  "query": [{"key": "limit", "value": "15"}]
+                },
+                "description": "The complete story in chronological order.\n\nFilter for these event_types to see the AI's actions:\n  • ai_workflow_queued       — AI queued\n  • ai_workflow_started      — AI began\n  • ai_info_requested        — AI sent MIR portal\n  • portal_link_opened       — Originator opened link\n  • originator_response_submitted — Response received\n  • ai_auto_approved         — AI approved ✅\n  • ai_auto_declined         — AI declined ❌\n  • ai_followup_requested    — AI asked a second round\n  • ai_escalated_to_human    — AI gave up, escalated\n\nEvery 🤖 line is fully automated — zero human clicks."
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "━━ PHASE E: 🔁 Run the Demo Again ━━",
+          "description": "Want to show the demo again? The pattern is already promoted.\nJust repeat Phase B → C → D. The AI gets smarter each time.",
+          "item": [
+            {
+              "name": "E1 › Run Demo Again — New Transaction (same pattern)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if(pm.response.code===201){",
+                      "  const j = pm.response.json();",
+                      "  pm.collectionVariables.set('demoLiveTxn', j.data.transaction_id);",
+                      "  console.log('🎬 New demo transaction:', j.data.transaction_id, '|', j.data.status);",
+                      "  console.log('Run B2 → B3 → C1 → C2 → D1 to see the AI in action again.');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"company_name\": \"Demo Vendor Solutions\",\n  \"company_id\": \"DEMOVEND01\",\n  \"amount\": 3100.00,\n  \"account_number\": \"701199002\",\n  \"routing_number\": \"021000021\",\n  \"sec_code\": \"PPD\",\n  \"transaction_type\": \"debit\",\n  \"entry_description\": \"SERVICES\",\n  \"individual_name\": \"Demo Run 2\",\n  \"account_type\": \"checking\",\n  \"trace_number\": \"DEMOLIVE00002\",\n  \"ofac_screened\": true,\n  \"ofac_result\": \"clear\",\n  \"sanctions_check_status\": \"cleared\",\n  \"originator_email\": \"21dce006@charusat.edu.in\",\n  \"effective_date\": \"2026-07-01\"\n}"
+                },
+                "url": "{{baseUrl}}/api/transactions",
+                "description": "Repeat demo with $3,100 (still small bucket).\nAI should now use the Q&A pair from the first demo run as a reference example.\nThe message it generates will be informed by what worked before."
+              }
+            }
+          ]
+        }
+
+      ]
+    }
+
+  ]
+}

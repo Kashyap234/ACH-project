@@ -68,7 +68,7 @@ async function _createInfoRequest({ txn, roundNumber, category, message, actorTy
   await update('transactions', t => t.transaction_id === txn.transaction_id, () => ({
     status: 'more_info_required', last_info_request_id: requestId,
     info_request_rounds: roundNumber, resubmission_count: txn.resubmission_count || 0,
-  }));
+  }), { transaction_id: txn.transaction_id });
 
   const portalUrl   = `${PORTAL_BASE_URL}/portal/${portalToken}`;
   const emailTo     = originatorEmail || txn.originator_email;
@@ -82,7 +82,7 @@ async function _createInfoRequest({ txn, roundNumber, category, message, actorTy
 // POST /api/transactions/:id/request-info (human, admin-auth)
 router.post('/transactions/:id/request-info', authenticate, async (req, res) => {
   try {
-    const txn = await queryOne('transactions', t => t.transaction_id === req.params.id);
+    const txn = await queryOne('transactions', t => t.transaction_id === req.params.id, { transaction_id: req.params.id });
     if (!txn) return res.status(404).json({ success: false, error: 'Transaction not found' });
     if (!['under_review','more_info_required'].includes(txn.status))
       return res.status(409).json({ success: false, error: `Cannot request info on status: ${txn.status}` });
@@ -93,7 +93,7 @@ router.post('/transactions/:id/request-info', authenticate, async (req, res) => 
     if (!message || message.trim().length < 10)
       return res.status(400).json({ success: false, error: 'message required (min 10 chars)' });
 
-    const existing    = await queryAll('info_requests', r => r.transaction_id === req.params.id);
+    const existing    = await queryAll('info_requests', r => r.transaction_id === req.params.id, { where: { transaction_id: req.params.id } });
     const roundNumber = existing.length + 1;
     const reviewer    = req.user;
 
@@ -112,8 +112,8 @@ router.post('/transactions/:id/request-info', authenticate, async (req, res) => 
     ;(async () => {
       try {
         const [companyTransactions, allInfoRequests] = await Promise.all([
-          queryAll('transactions', t => t.company_id === txn.company_id),
-          queryAll('info_requests', r => r.transaction_id === txn.transaction_id, { orderBy: 'created_at', desc: false }),
+          queryAll('transactions', t => t.company_id === txn.company_id, { where: { company_id: txn.company_id } }),
+          queryAll('info_requests', r => r.transaction_id === txn.transaction_id, { where: { transaction_id: txn.transaction_id }, orderBy: 'created_at', desc: false }),
         ]);
         const newBrief = await regenerateBriefForOperation(txn, riskResult, 'more_info_requested', {
           companyTransactions,
@@ -138,7 +138,7 @@ router.post('/transactions/:id/request-info', authenticate, async (req, res) => 
 // GET /api/transactions/:id/info-requests (admin-auth)
 router.get('/transactions/:id/info-requests', authenticate, async (req, res) => {
   try {
-    const rounds = await queryAll('info_requests', r => r.transaction_id === req.params.id, { orderBy: 'created_at', desc: false });
+    const rounds = await queryAll('info_requests', r => r.transaction_id === req.params.id, { where: { transaction_id: req.params.id }, orderBy: 'created_at', desc: false });
     console.log(`[MIR] GET info-requests for ${req.params.id}: found ${rounds.length} round(s)`);
     res.json({ success: true, data: rounds.map(r => ({ ...r, portal_token: r.portal_token ? '••••••••' : null })), total: rounds.length });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
@@ -147,9 +147,9 @@ router.get('/transactions/:id/info-requests', authenticate, async (req, res) => 
 // POST /api/transactions/:id/override-ai (admin-auth) — human takes over
 router.post('/transactions/:id/override-ai', authenticate, async (req, res) => {
   try {
-    const txn = await queryOne('transactions', t => t.transaction_id === req.params.id);
+    const txn = await queryOne('transactions', t => t.transaction_id === req.params.id, { transaction_id: req.params.id });
     if (!txn) return res.status(404).json({ success: false, error: 'Not found' });
-    await update('transactions', t => t.transaction_id === req.params.id, () => ({ ai_human_override: true, ai_escalation_reason: `Human override by ${req.user.full_name}`, status: txn.status === 'ai_workflow' ? 'under_review' : txn.status }));
+    await update('transactions', t => t.transaction_id === req.params.id, () => ({ ai_human_override: true, ai_escalation_reason: `Human override by ${req.user.full_name}`, status: txn.status === 'ai_workflow' ? 'under_review' : txn.status }), { transaction_id: req.params.id });
     await insert('audit_logs', { transaction_id: txn.transaction_id, event_type: 'human_override', event_summary: `👤 Human override: ${req.user.full_name} took control from AI_AUTOMATION`, event_data: { reviewer: req.user.username }, actor: req.user.full_name, severity: 'warning' });
     res.json({ success: true, message: 'Human override activated. Transaction is now in your review queue.' });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
@@ -158,19 +158,19 @@ router.post('/transactions/:id/override-ai', authenticate, async (req, res) => {
 // GET /api/portal/:token (PUBLIC)
 router.get('/portal/:token', async (req, res) => {
   try {
-    const infoReq = await queryOne('info_requests', r => r.portal_token === req.params.token);
+    const infoReq = await queryOne('info_requests', r => r.portal_token === req.params.token, { portal_token: req.params.token });
     if (!infoReq) return res.status(404).json({ success: false, error: 'Invalid or expired portal link.' });
     if (new Date(infoReq.token_expires_at) < new Date()) {
-      await update('info_requests', r => r.portal_token === req.params.token, () => ({ status: 'expired' }));
+      await update('info_requests', r => r.portal_token === req.params.token, () => ({ status: 'expired' }), { portal_token: req.params.token });
       return res.status(410).json({ success: false, error: 'This portal link has expired. Please contact your bank for a new link.' });
     }
     if (infoReq.status === 'responded')
       return res.status(409).json({ success: false, error: 'This request has already been responded to.' });
     if (!infoReq.link_opened_at) {
-      await update('info_requests', r => r.portal_token === req.params.token, () => ({ link_opened_at: new Date().toISOString() }));
+      await update('info_requests', r => r.portal_token === req.params.token, () => ({ link_opened_at: new Date().toISOString() }), { portal_token: req.params.token });
       await insert('audit_logs', { transaction_id: infoReq.transaction_id, event_type: 'portal_link_opened', event_summary: `🔗 Portal link opened — ${infoReq.request_id} [Round ${infoReq.round_number}]`, event_data: { request_id: infoReq.request_id, actor_type: infoReq.actor_type }, actor: 'ORIGINATOR', severity: 'info' });
     }
-    const txn = await queryOne('transactions', t => t.transaction_id === infoReq.transaction_id);
+    const txn = await queryOne('transactions', t => t.transaction_id === infoReq.transaction_id, { transaction_id: infoReq.transaction_id });
     if (!txn) return res.status(404).json({ success: false, error: 'Transaction not found.' });
     res.json({ success: true, data: { request_id: infoReq.request_id, round_number: infoReq.round_number, category: infoReq.category, message: infoReq.message, requested_fields: infoReq.requested_fields || [], token_expires_at: infoReq.token_expires_at, sla_deadline_at: infoReq.sla_deadline_at, actor_type: infoReq.actor_type, transaction: safeTxnSummary(txn) } });
   } catch (e) { console.error('[GET /portal/:token]', e); res.status(500).json({ success: false, error: 'An error occurred. Please try again.' }); }
@@ -179,10 +179,10 @@ router.get('/portal/:token', async (req, res) => {
 // POST /api/portal/:token/respond (PUBLIC)
 router.post('/portal/:token/respond', async (req, res) => {
   try {
-    const infoReq = await queryOne('info_requests', r => r.portal_token === req.params.token);
+    const infoReq = await queryOne('info_requests', r => r.portal_token === req.params.token, { portal_token: req.params.token });
     if (!infoReq) return res.status(404).json({ success: false, error: 'Invalid or expired portal link.' });
     if (new Date(infoReq.token_expires_at) < new Date()) {
-      await update('info_requests', r => r.portal_token === req.params.token, () => ({ status: 'expired' }));
+      await update('info_requests', r => r.portal_token === req.params.token, () => ({ status: 'expired' }), { portal_token: req.params.token });
       return res.status(410).json({ success: false, error: 'This portal link has expired.' });
     }
     if (infoReq.status !== 'pending')
@@ -193,9 +193,9 @@ router.post('/portal/:token/respond', async (req, res) => {
       return res.status(400).json({ success: false, error: 'A response message is required (min 5 characters).' });
 
     const respondedAt = new Date().toISOString();
-    await update('info_requests', r => r.portal_token === req.params.token, () => ({ status: 'responded', response_message: response_message.trim(), responded_at: respondedAt }));
+    await update('info_requests', r => r.portal_token === req.params.token, () => ({ status: 'responded', response_message: response_message.trim(), responded_at: respondedAt }), { portal_token: req.params.token });
 
-    const txn = await queryOne('transactions', t => t.transaction_id === infoReq.transaction_id);
+    const txn = await queryOne('transactions', t => t.transaction_id === infoReq.transaction_id, { transaction_id: infoReq.transaction_id });
     if (!txn) return res.status(404).json({ success: false, error: 'Transaction not found.' });
 
     const newResubCount = (txn.resubmission_count || 0) + 1;
@@ -206,8 +206,8 @@ router.post('/portal/:token/respond', async (req, res) => {
     ;(async () => {
       try {
         const [companyTransactions, allInfoRequests] = await Promise.all([
-          queryAll('transactions', t => t.company_id === txn.company_id),
-          queryAll('info_requests', r => r.transaction_id === txn.transaction_id, { orderBy: 'created_at', desc: false }),
+          queryAll('transactions', t => t.company_id === txn.company_id, { where: { company_id: txn.company_id } }),
+          queryAll('info_requests', r => r.transaction_id === txn.transaction_id, { where: { transaction_id: txn.transaction_id }, orderBy: 'created_at', desc: false }),
         ]);
         const newBrief = await regenerateBriefForOperation(txn, _riskResult, 'info_responded', {
           companyTransactions,
@@ -235,12 +235,12 @@ router.post('/portal/:token/respond', async (req, res) => {
         res.json({ success: true, message: 'Your response has been received and is being reviewed. You will be notified of the outcome.', resubmission_count: newResubCount });
       } else {
         // Pattern gone (demoted?) — fall back to human
-        await update('transactions', t => t.transaction_id === infoReq.transaction_id, () => ({ status: 'under_review', resubmission_count: newResubCount, last_resubmitted_at: respondedAt, previous_status: 'more_info_required' }));
+        await update('transactions', t => t.transaction_id === infoReq.transaction_id, () => ({ status: 'under_review', resubmission_count: newResubCount, last_resubmitted_at: respondedAt, previous_status: 'more_info_required' }), { transaction_id: infoReq.transaction_id });
         res.json({ success: true, message: 'Your response has been submitted. A reviewer will be in touch.', resubmission_count: newResubCount });
       }
     } else {
       // Human-initiated — flip back to under_review
-      await update('transactions', t => t.transaction_id === infoReq.transaction_id, () => ({ status: 'under_review', resubmission_count: newResubCount, last_resubmitted_at: respondedAt, previous_status: 'more_info_required' }));
+      await update('transactions', t => t.transaction_id === infoReq.transaction_id, () => ({ status: 'under_review', resubmission_count: newResubCount, last_resubmitted_at: respondedAt, previous_status: 'more_info_required' }), { transaction_id: infoReq.transaction_id });
       await insert('audit_logs', { transaction_id: infoReq.transaction_id, event_type: 'transaction_resubmitted', event_summary: `🔄 Back under review after originator response (resubmission #${newResubCount})`, event_data: { resubmission_count: newResubCount }, actor: 'ORIGINATOR', severity: 'info' });
       res.json({ success: true, message: 'Your response has been submitted. The bank will review it and contact you if further information is needed. Thank you.', resubmission_count: newResubCount });
     }
@@ -249,7 +249,7 @@ router.post('/portal/:token/respond', async (req, res) => {
 
 // Called by learningPipeline.js autonomous workflow
 async function recordAutoMirRequest(txn, category, message, patternHash, roundNumber) {
-  const round  = roundNumber || ((await queryAll('info_requests', r => r.transaction_id === txn.transaction_id)).length + 1);
+  const round  = roundNumber || ((await queryAll('info_requests', r => r.transaction_id === txn.transaction_id, { where: { transaction_id: txn.transaction_id } })).length + 1);
   const result = await _createInfoRequest({ txn, roundNumber: round, category, message, actorType: 'AI_AUTOMATION', actorName: 'AI Automation', patternHash });
   await insert('audit_logs', { transaction_id: txn.transaction_id, event_type: 'ai_info_requested', event_summary: `🤖 AI_AUTOMATION: Info requested [Round ${round}] — ${category.replace(/_/g,' ')} (Pattern: ${patternHash})`, event_data: { request_id: result.requestId, round, category, portal_url: result.portalUrl, pattern_hash: patternHash }, actor: 'AI_AUTOMATION', severity: 'info' });
   return result;
