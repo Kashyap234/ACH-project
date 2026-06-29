@@ -4,6 +4,7 @@ const express = require('express');
 const cors    = require('cors');
 const { seed } = require('./database/seed');
 const { initGemini } = require('./services/aiTriage');
+const { runWeeklyCalibration, checkDistributionDrift } = require('./services/calibrationService');
 const authRouter           = require('./routes/auth');
 const transactionsRouter    = require('./routes/transactions');
 const analyticsRouter       = require('./routes/analytics');
@@ -88,6 +89,30 @@ async function bootstrap() {
         });
       }, 150000); // 150,000 ms = 2.5 minutes
     }
+
+    // Initial drift check 30s after startup (let DB warm up first)
+    setTimeout(() => {
+      checkDistributionDrift()
+        .then(r => { if (r.alerts?.length) console.warn('[Startup] Drift alerts:', r.alerts.map(a => a.type).join(', ')); })
+        .catch(e => console.warn('[Startup] Drift check failed (non-fatal):', e.message));
+    }, 30000);
+
+    // Distribution drift check every 4 hours
+    setInterval(() => {
+      checkDistributionDrift()
+        .then(r => { if (r.alerts?.length) console.warn('[Drift] Alerts:', r.alerts.map(a => a.type).join(', ')); })
+        .catch(e => console.warn('[Drift] Check failed (non-fatal):', e.message));
+    }, 4 * 60 * 60 * 1000); // 4 hours
+
+    // Weekly calibration — every 7 days
+    // Delay 60s so DB is fully warm and first transactions can establish baseline patterns
+    setTimeout(() => {
+      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+      setInterval(() => {
+        runWeeklyCalibration()
+          .catch(e => console.error('[Calibration] Weekly run failed:', e.message));
+      }, SEVEN_DAYS_MS);
+    }, 60000);
   });
 }
 

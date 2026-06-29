@@ -4,7 +4,7 @@ const router  = express.Router();
 const { v4: uuidv4 }  = require('uuid');
 const { queryAll, queryOne, insert, update } = require('../database/db');
 const { scoreTransaction }    = require('../services/riskEngine');
-const { generateComplianceNotes, generateReviewBrief, regenerateBriefForOperation } = require('../services/aiTriage');
+const { generateComplianceNotes, generateReviewBrief, regenerateBriefForOperation, getAiScoreAdjustment } = require('../services/aiTriage');
 const { recordDecision, checkPatternMatch, startLifecycle, runAutonomousWorkflow } = require('../services/learningPipeline');
 const { authenticate } = require('../middleware/auth');
 
@@ -126,25 +126,59 @@ router.post('/', async (req, res) => {
       originator: 'API',
     };
     const todayStr = new Date().toISOString().split('T')[0];
-    const dbCount = (await queryAll(
-      'transactions',
-      t => t.company_id === txn.company_id && t.effective_date === todayStr,
-      { where: { company_id: txn.company_id, effective_date: todayStr } }
-    )).length;
-    const isDbDuplicate = txn.trace_number
-      ? !!(await queryOne('transactions', t => t.trace_number === txn.trace_number, { trace_number: txn.trace_number }))
-      : false;
-    const check_stale = txn.issued_check_date ? (new Date() - new Date(txn.issued_check_date)) > 90 * 24 * 60 * 60 * 1000 : false;
+    // Run all pre-scoring lookups in parallel to minimise latency
+    const [dbCountRows, isDbDuplicateRow, originatorProfile] = await Promise.all([
+      queryAll('transactions', t => t.company_id === txn.company_id && t.effective_date === todayStr, { where: { company_id: txn.company_id, effective_date: todayStr } }),
+      txn.trace_number ? queryOne('transactions', t => t.trace_number === txn.trace_number, { trace_number: txn.trace_number }) : Promise.resolve(null),
+      // 3.3 Originator trust score lookup
+      queryOne('originator_profiles', p => p.company_id === txn.company_id).catch(() => null),
+    ]);
+    const dbCount      = dbCountRows.length;
+    const isDbDuplicate = !!isDbDuplicateRow;
+    const check_stale   = txn.issued_check_date ? (Date.now() - new Date(txn.issued_check_date).getTime()) > 90 * 24 * 60 * 60 * 1000 : false;
+
     const ctx = {
-      company_daily_count: dbCount + 1,
-      duplicate_trace: isDbDuplicate,
-      check_stale
+      company_daily_count:    dbCount + 1,
+      duplicate_trace:        isDbDuplicate,
+      check_stale,
+      originator_trust_score: originatorProfile?.trust_score ?? null, // 3.3
     };
+
     const riskResult = await scoreTransaction(txn, ctx);
+
+    // 4.1 Bounded AI score adjustment (L2/L3 only, 2.5 s timeout, confidence-gated)
+    let aiAdjustment = { delta: 0, reason: null, confidence: 0 };
+    if (riskResult.riskLevel >= 2) {
+      aiAdjustment = await Promise.race([
+        getAiScoreAdjustment(txn, riskResult),
+        new Promise(resolve => setTimeout(() => resolve({ delta: 0, reason: 'AI score adjustment timed out', confidence: 0 }), 2500)),
+      ]).catch(() => ({ delta: 0, reason: 'AI score adjustment error', confidence: 0 }));
+    }
+
+    // Apply delta, re-determine level using same SEC-adjusted thresholds riskEngine computed
+    let finalRiskScore = Math.min(100, riskResult.riskScore + (aiAdjustment.delta || 0));
+    let finalRiskLevel = riskResult.riskLevel;
+    if ((aiAdjustment.delta || 0) > 0) {
+      const fp   = riskResult.riskFingerprint || {};
+      const adjT = fp.sec_adj_thresholds || { l1_l2: 40, l2_l3: 60, l3_direct: 70 };
+      const maxFlagLevel = (riskResult.riskFlags || []).reduce((m, f) => Math.max(m, f.flag_level), 1);
+      finalRiskLevel = maxFlagLevel === 3 ? 3
+        : maxFlagLevel === 2 ? (finalRiskScore >= adjT.l2_l3 ? 3 : 2)
+        : (finalRiskScore >= adjT.l3_direct ? 3 : finalRiskScore >= adjT.l1_l2 ? 2 : 1);
+    }
+
+    // Build riskResult-like object that uses the AI-adjusted values downstream
+    const adjustedRiskResult = {
+      ...riskResult,
+      riskLevel: finalRiskLevel,
+      riskScore: finalRiskScore,
+    };
+
     const match = await checkPatternMatch(txn, riskResult.riskFlags);
-    let effectiveLevel = riskResult.riskLevel;
+    let effectiveLevel = finalRiskLevel;
     let patternNote    = null;
-    if (match && riskResult.riskLevel > 1) {
+    // 1.6 FIXED: pattern promotion only overrides L2→L1, never L3 (safety guard)
+    if (match && finalRiskLevel > 1 && finalRiskLevel <= 2) {
       effectiveLevel = 1;
       patternNote = `🧠 Promoted by AI learning (Pattern ${match.pattern_hash}: ${Math.round(match.confidence_score * 100)}% confidence, ${match.total_decisions} decisions)`;
     }
@@ -160,48 +194,67 @@ router.post('/', async (req, res) => {
 
     if (effectiveLevel === 1 && !hasWorkflowPlaybook) {
       // Simple zero-touch auto-approve
-      complianceNotes = await generateComplianceNotes(txn, riskResult);
+      complianceNotes = await generateComplianceNotes(txn, adjustedRiskResult);
       if (patternNote) complianceNotes = `### ${patternNote}\n\n---\n\n${complianceNotes}`;
       aiBrief = complianceNotes;
       status = 'auto_approved';
     } else if (effectiveLevel === 1 && hasWorkflowPlaybook) {
       // Autonomous workflow — AI will handle MIR rounds and final decision
-      // Status starts as 'ai_workflow', runAutonomousWorkflow fires asynchronously
-      const brief = await generateReviewBrief(txn, riskResult);
+      const brief = await generateReviewBrief(txn, adjustedRiskResult);
       aiBrief = brief.brief; aiRecommendation = brief.recommendation; aiConfidence = brief.confidence;
       status = 'ai_workflow';
     } else {
       // Human review required
-      const brief = await generateReviewBrief(txn, riskResult);
+      const brief = await generateReviewBrief(txn, adjustedRiskResult);
       aiBrief = brief.brief; aiRecommendation = brief.recommendation; aiConfidence = brief.confidence;
       status = 'under_review';
     }
 
     const saved = await insert('transactions', {
-      ...txn, risk_level: effectiveLevel, risk_score: riskResult.riskScore,
-      risk_flags: riskResult.riskFlags, ai_brief: aiBrief,
-      compliance_notes: complianceNotes, ai_recommendation: aiRecommendation,
-      ai_confidence: aiConfidence, status,
-      ai_workflow_pattern: match?.pattern_hash || null,
-      ai_human_override:   false,
-      resubmission_count:  0,
-      info_request_rounds: 0,
+      ...txn,
+      risk_level:           effectiveLevel,
+      risk_score:           finalRiskScore,
+      risk_flags:           riskResult.riskFlags,
+      risk_fingerprint:     riskResult.riskFingerprint || null,
+      ai_score_adjustment:  aiAdjustment.delta > 0 ? aiAdjustment : null,
+      originator_trust_score: originatorProfile?.trust_score ?? null,
+      ai_brief:             aiBrief,
+      compliance_notes:     complianceNotes,
+      ai_recommendation:    aiRecommendation,
+      ai_confidence:        aiConfidence,
+      status,
+      ai_workflow_pattern:  match?.pattern_hash || null,
+      ai_human_override:    false,
+      resubmission_count:   0,
+      info_request_rounds:  0,
     });
 
-    await insert('audit_logs', { transaction_id, event_type: 'transaction_created', event_summary: `Ingested: ${txn.sec_code} $${parseFloat(body.amount).toLocaleString()} from ${txn.company_name}`, event_data: { risk_level: effectiveLevel, risk_score: riskResult.riskScore, flags: riskResult.riskFlags.length, sec_code: txn.sec_code }, actor: 'SYSTEM', severity: 'info' });
+    const aiDeltaNote = aiAdjustment.delta > 0
+      ? ` [+${aiAdjustment.delta}pt AI adj, conf=${Math.round(aiAdjustment.confidence * 100)}%]`
+      : '';
+    await insert('audit_logs', {
+      transaction_id, event_type: 'transaction_created',
+      event_summary: `Ingested: ${txn.sec_code} $${parseFloat(body.amount).toLocaleString()} from ${txn.company_name}${aiDeltaNote}`,
+      event_data: {
+        risk_level: effectiveLevel, risk_score: finalRiskScore,
+        base_score: riskResult.riskScore, ai_adjustment: aiAdjustment.delta || 0,
+        flags: riskResult.riskFlags.length, sec_code: txn.sec_code,
+        trust_score: originatorProfile?.trust_score ?? null,
+      },
+      actor: 'SYSTEM', severity: 'info',
+    });
 
     if (status === 'auto_approved') {
-      await insert('audit_logs', { transaction_id, event_type: 'auto_approved', event_summary: `Auto-approved (Score: ${riskResult.riskScore}/100)`, event_data: { ai_recommendation: aiRecommendation, ai_confidence: aiConfidence }, actor: 'AI', severity: 'info' });
+      await insert('audit_logs', { transaction_id, event_type: 'auto_approved', event_summary: `Auto-approved (Score: ${finalRiskScore}/100)`, event_data: { ai_recommendation: aiRecommendation, ai_confidence: aiConfidence }, actor: 'AI', severity: 'info' });
     } else if (status === 'ai_workflow') {
-      // Start lifecycle and fire autonomous workflow asynchronously
       await insert('audit_logs', { transaction_id, event_type: 'ai_workflow_queued', event_summary: `🤖 AI autonomous workflow queued (Pattern: ${match.pattern_hash})`, event_data: { pattern_hash: match.pattern_hash, confidence: match.confidence_score }, actor: 'AI', severity: 'info' });
       // Non-blocking — responds to caller immediately
-      runAutonomousWorkflow(saved, riskResult, match).catch(e => {
+      runAutonomousWorkflow(saved, adjustedRiskResult, match).catch(e => {
         console.error(`[AI_AUTOMATION] runAutonomousWorkflow error for ${transaction_id}:`, e.message);
       });
     } else {
       // under_review — start lifecycle for human workflow tracking
-      startLifecycle(saved, riskResult).catch(console.error);
+      startLifecycle(saved, adjustedRiskResult).catch(console.error);
       await insert('audit_logs', { transaction_id, event_type: 'ai_processed', event_summary: `AI brief ready — Level ${effectiveLevel} human review required`, event_data: { ai_recommendation: aiRecommendation, ai_confidence: aiConfidence }, actor: 'AI', severity: 'info' });
     }
 
@@ -246,7 +299,7 @@ router.post('/:id/decision', authenticate, async (req, res) => {
       reviewer_role:      reviewer.role,
     }));
 
-    const riskResult = { riskLevel: txn.risk_level, riskScore: txn.risk_score, riskFlags: txn.risk_flags || [] };
+    const riskResult = { riskLevel: txn.risk_level, riskScore: txn.risk_score, riskFlags: txn.risk_flags || [], riskFingerprint: txn.risk_fingerprint || null };
     recordDecision(txn, decision, reviewData, riskResult).catch(console.error);
 
     // Regenerate AI brief in background with company-wide context and decision outcome

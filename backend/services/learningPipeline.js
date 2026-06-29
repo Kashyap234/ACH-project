@@ -17,29 +17,73 @@
 //       d) Human can intervene and override at any point
 //       e) Every step tagged actor: 'AI_AUTOMATION' in audit logs
 //
-// Existing exports preserved exactly:
-//   recordDecision(txn, decision, reviewData, riskResult)
-//   checkPatternMatch(txn, riskFlags)
-//   getLearningStats()
+// ── Improvements applied ──────────────────────────────────────────────────────
+//  1.1 Bayesian Beta prior on confidence (prevents premature promotion)
+//  1.2 Temporal decay on historical weights (old decisions lose influence)
+//  1.3 Overlapping amount buckets (fixes $4,999 vs $5,001 hash split)
+//  1.4 Re-promotion path after demotion (with elevated 90% threshold)
+//  1.5 Cross-pattern transfer learning (warm-start from sibling patterns)
+//  1.6 L3 conflict guard (autonomous workflow never auto-approves L3)
 
 'use strict';
 
 const crypto = require('crypto');
 const { queryAll, queryOne, insert, update } = require('../database/db');
 
-// ── Thresholds ────────────────────────────────────────────────────────────────
+// ── Core thresholds ───────────────────────────────────────────────────────────
 const MIN_DECISIONS  = 5;
 const CONF_THRESHOLD = 0.85;
 const DEMOTION_FLOOR = 0.70;
 const CONFIDENCE_WEIGHTS = { HIGH: 1.0, MEDIUM: 0.7, LOW: 0.4 };
 
-// ── Amount bucket ─────────────────────────────────────────────────────────────
+// ── 1.1 Bayesian Beta prior (α=2, β=2) ───────────────────────────────────────
+// Prevents a single high-confidence early decision from producing confidence≈1.0.
+// First approve at weight=1.0 → (1+2)/(1+0+2+2) = 0.60 (was 1.0 without prior)
+const BETA_PRIOR_A = 2;
+const BETA_PRIOR_B = 2;
+
+// ── 1.2 Temporal decay ───────────────────────────────────────────────────────
+// Half-life ≈ 87 days. Decisions from 6+ months ago contribute ~5% of their original weight.
+const DECAY_LAMBDA = 0.008;
+
+// ── 1.4 Re-promotion constants ────────────────────────────────────────────────
+const REPROMOTE_THRESHOLD        = 0.90;  // Higher bar than initial promotion (0.85)
+const REPROMOTE_MIN_DECISIONS    = 8;
+const MAX_DEMOTIONS_BEFORE_FREEZE = 3;    // Pattern frozen permanently after 3 demotions
+
+// ── 1.5 Cross-pattern transfer ────────────────────────────────────────────────
+const TRANSFER_WEIGHT = 0.25; // 25% of sibling's weights transferred to new pattern
+
+// ── 1.6 Autonomy safety limits ────────────────────────────────────────────────
+const AUTONOMY_MAX_RISK_LEVEL = 2;  // Never autonomous on L3 transactions
+const AUTONOMY_MAX_SCORE      = 72; // Score cap for autonomous approval
+
+// ── Amount buckets ────────────────────────────────────────────────────────────
+// Original single-bucket function — kept for feature-vector building (backward compat)
 function getAmountBucket(amount) {
   if (amount < 500)    return 'micro';
   if (amount < 5000)   return 'small';
   if (amount < 25000)  return 'medium';
   if (amount < 100000) return 'large';
   return 'xlarge';
+}
+
+// 1.3 Dual-bucket: returns array of 1 or 2 buckets when amount is within 10% of a boundary.
+// $4,750 → ['small', 'medium']   $5,250 → ['medium', 'small']   $10,000 → ['medium']
+function getAmountBuckets(amount) {
+  const BOUNDS = [500, 5000, 25000, 100000];
+  const NAMES  = ['micro', 'small', 'medium', 'large', 'xlarge'];
+  const primaryIdx = BOUNDS.findIndex(b => amount < b);
+  const primary    = NAMES[primaryIdx === -1 ? 4 : primaryIdx];
+
+  for (let i = 0; i < BOUNDS.length; i++) {
+    if (Math.abs(amount - BOUNDS[i]) / BOUNDS[i] < 0.10) {
+      // Adjacent bucket is the one on the other side of this boundary
+      const adjacent = amount < BOUNDS[i] ? NAMES[i + 1] : NAMES[i];
+      if (adjacent && adjacent !== primary) return [primary, adjacent];
+    }
+  }
+  return [primary];
 }
 
 // ── Feature vector ────────────────────────────────────────────────────────────
@@ -67,22 +111,34 @@ function buildFeatureVector(txn, riskFlags, reviewData = {}) {
   };
 }
 
-// ── Pattern hash ──────────────────────────────────────────────────────────────
-function generatePatternHash(txn, riskFlags) {
-  const key = {
+// ── Pattern hashing ───────────────────────────────────────────────────────────
+// Internal helper used by both single and multi-hash variants
+function _hashFromKey(key) {
+  return crypto.createHash('sha256').update(JSON.stringify(key)).digest('hex').slice(0, 16);
+}
+
+// 1.3 Returns array of hashes: [primaryHash, optionalAdjacentHash]
+function generatePatternHashes(txn, riskFlags) {
+  const buckets   = getAmountBuckets(txn.amount);
+  const flagCodes = (riskFlags || []).map(f => f.rule_code).sort().join(',');
+  return buckets.map(bucket => _hashFromKey({
     sec_code:      txn.sec_code,
     txn_type:      txn.transaction_type,
-    amount_bucket: getAmountBucket(txn.amount),
-    flag_codes:    (riskFlags || []).map(f => f.rule_code).sort().join(','),
+    amount_bucket: bucket,
+    flag_codes:    flagCodes,
     account_type:  txn.account_type || 'checking',
-  };
-  return crypto.createHash('sha256').update(JSON.stringify(key)).digest('hex').slice(0, 16);
+  }));
+}
+
+// Primary hash (backward-compatible single value)
+function generatePatternHash(txn, riskFlags) {
+  return generatePatternHashes(txn, riskFlags)[0];
 }
 
 function buildPatternDescription(txn, riskFlags) {
   const bucket   = getAmountBucket(txn.amount);
   const flagList = (riskFlags || []).map(f => f.rule_name).join(' | ') || 'No flags';
-  return `${txn.sec_code} ${txn.transaction_type?.toUpperCase()} [${bucket}] via ${txn.account_type || 'checking'} | ${flagList}`;
+  return `${txn.sec_code} ${(txn.transaction_type || '').toUpperCase()} [${bucket}] via ${txn.account_type || 'checking'} | ${flagList}`;
 }
 
 // ── LLM caller ────────────────────────────────────────────────────────────────
@@ -94,7 +150,7 @@ function _getGemini() {
     try {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       _geminiModel = new GoogleGenerativeAI(key).getGenerativeModel({
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-2.0-flash-lite',
         generationConfig: { temperature: 0.1, maxOutputTokens: 512 },
       });
     } catch (_) {}
@@ -117,7 +173,6 @@ async function _callLLM(prompt) {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — LIFECYCLE RECORDING
-// Builds the JSON training record in real time as each human action happens.
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function startLifecycle(txn, riskResult) {
@@ -175,7 +230,7 @@ async function recordLifecycleResponse(txnId, roundNumber, responseMessage) {
     action:           'response_submitted',
     round:            roundNumber,
     response_message: responseMessage,
-    response_length:  responseMessage.length,
+    response_length:  (responseMessage || '').length,
     timestamp:        new Date().toISOString(),
   });
   await update('transaction_lifecycles', l => l.transaction_id === txnId, () => ({ steps }));
@@ -201,39 +256,35 @@ async function finaliseLifecycle(txn, decision, reviewData, riskResult) {
     final_actor:      reviewData._actorType || 'HUMAN',
     completed_at:     new Date().toISOString(),
   }));
-  // Feed the sealed lifecycle into pattern learning
   await _updatePatternFromLifecycle(txn, decision, reviewData, riskResult, { ...lc, steps });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 2 — PATTERN LEARNING
+// Applies improvements 1.1, 1.2, 1.4, 1.5
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function _updatePatternFromLifecycle(txn, decision, reviewData, riskResult, lifecycle) {
-  // Resubmission deduplication — only the first terminal decision counts.
-  // NOTE: review_decisions is inserted before this function is called, so we check
-  // for > 1 record (the current insert is always present by the time we get here).
+  // Resubmission deduplication — only the first terminal decision updates counts.
   const allDecisions   = await queryAll('review_decisions', r => r.transaction_id === txn.transaction_id);
   const isResubmission = allDecisions.length > 1;
 
-  const patternHash    = generatePatternHash(txn, riskResult.riskFlags);
-  const description    = buildPatternDescription(txn, riskResult.riskFlags);
-  const featureVector  = buildFeatureVector(txn, riskResult.riskFlags, reviewData);
-  const confWeight     = CONFIDENCE_WEIGHTS[reviewData.reviewer_confidence || 'MEDIUM'];
-  const mirRounds      = lifecycle.total_rounds || 0;
+  const patternHash   = generatePatternHash(txn, riskResult.riskFlags);
+  const description   = buildPatternDescription(txn, riskResult.riskFlags);
+  const featureVector = buildFeatureVector(txn, riskResult.riskFlags, reviewData);
+  const confWeight    = CONFIDENCE_WEIGHTS[reviewData.reviewer_confidence || 'MEDIUM'];
+  const mirRounds     = lifecycle.total_rounds || 0;
 
-  // Extract request + response steps from lifecycle
-  const requestSteps   = (lifecycle.steps || []).filter(s => s.action === 'info_requested');
-  const responseSteps  = (lifecycle.steps || []).filter(s => s.action === 'response_submitted');
+  const requestSteps  = (lifecycle.steps || []).filter(s => s.action === 'info_requested');
+  const responseSteps = (lifecycle.steps || []).filter(s => s.action === 'response_submitted');
   const categoriesUsed = requestSteps.map(s => s.category);
 
-  // Build Q&A pairs from this lifecycle — the core training data
   const newQA = requestSteps.map((req, i) => ({
     round:            req.round,
     category:         req.category,
     message_template: req.message,
     response_example: responseSteps[i]?.response_message || null,
-    response_length:  responseSteps[i]?.response_length || 0,
+    response_length:  responseSteps[i]?.response_length  || 0,
     led_to_more_info: i < requestSteps.length - 1,
     led_to_decision:  i === requestSteps.length - 1,
     final_outcome:    i === requestSteps.length - 1 ? decision : null,
@@ -245,20 +296,33 @@ async function _updatePatternFromLifecycle(txn, decision, reviewData, riskResult
   if (existing) {
     const catCounts = { ...(existing.mir_category_counts || {}) };
     categoriesUsed.forEach(c => { catCounts[c] = (catCounts[c] || 0) + 1; });
-
-    // Rolling window of up to 20 Q&A pairs
     const allQA = [...(existing.learned_qa_pairs || []), ...newQA].slice(-20);
 
     if (!isResubmission) {
-      const approveW    = existing.approve_weight + (decision === 'approve' ? confWeight : 0);
-      const declineW    = existing.decline_weight + (decision === 'decline' ? confWeight : 0);
-      const newConf     = (approveW + declineW) > 0 ? approveW / (approveW + declineW) : 0;
-      const newTotal    = existing.total_decisions + 1;
-      const newMirCount = existing.mir_count + (mirRounds > 0 ? 1 : 0);
-      const prevAvg     = existing.avg_rounds_to_resolve || 0;
-      const newAvgRounds = mirRounds > 0
-        ? (prevAvg * (existing.mir_count || 0) + mirRounds) / Math.max(1, newMirCount)
-        : prevAvg;
+      // 1.2 Temporal decay: weight old decisions less as time passes.
+      // Reads updated_at from the existing pattern record.
+      const lastUpdatedAt    = existing.updated_at || existing.created_at;
+      const daysSinceLast    = lastUpdatedAt
+        ? (Date.now() - new Date(lastUpdatedAt).getTime()) / 86400000
+        : 0;
+      const decayFactor      = Math.exp(-DECAY_LAMBDA * Math.max(0, daysSinceLast));
+      const decayedApproveW  = (existing.approve_weight || 0) * decayFactor;
+      const decayedDeclineW  = (existing.decline_weight || 0) * decayFactor;
+
+      // Add this decision on top of decayed historical weights
+      const approveW = decayedApproveW + (decision === 'approve' ? confWeight : 0);
+      const declineW = decayedDeclineW + (decision === 'decline' ? confWeight : 0);
+
+      // 1.1 Bayesian Beta prior: (approveW + α) / (total + α + β)
+      // Prevents extreme confidence on sparse data
+      const newConf  = (approveW + BETA_PRIOR_A) / (approveW + declineW + BETA_PRIOR_A + BETA_PRIOR_B);
+      const newTotal = existing.total_decisions + 1;
+
+      const newMirCount  = existing.mir_count + (mirRounds > 0 ? 1 : 0);
+      const prevAvgRounds = existing.avg_rounds_to_resolve || 0;
+      const newAvgRounds  = mirRounds > 0
+        ? (prevAvgRounds * (existing.mir_count || 0) + mirRounds) / Math.max(1, newMirCount)
+        : prevAvgRounds;
 
       await update('learning_patterns', p => p.pattern_hash === patternHash, () => ({
         approve_count:         existing.approve_count + (decision === 'approve' ? 1 : 0),
@@ -279,25 +343,92 @@ async function _updatePatternFromLifecycle(txn, decision, reviewData, riskResult
       }));
 
       const updated = await queryOne('learning_patterns', p => p.pattern_hash === patternHash);
+      if (!updated) return; // Guard against unexpected DB state
 
+      // Promotion check
       if (!existing.promoted_to_level1 && !existing.is_frozen
           && updated.total_decisions >= MIN_DECISIONS
           && updated.confidence_score >= CONF_THRESHOLD) {
         await _promotePattern(patternHash, updated);
       }
+
+      // Demotion check
       if (existing.promoted_to_level1 && updated.confidence_score < DEMOTION_FLOOR) {
         await _demotePattern(patternHash, updated.confidence_score);
       }
+
+      // 1.4 Re-promotion check: patterns that recovered after demotion
+      const demotionCount = existing.demotion_count || 0;
+      if (!existing.promoted_to_level1
+          && demotionCount > 0
+          && demotionCount < MAX_DEMOTIONS_BEFORE_FREEZE
+          && !existing.is_frozen
+          && updated.confidence_score >= REPROMOTE_THRESHOLD
+          && updated.total_decisions  >= REPROMOTE_MIN_DECISIONS) {
+        await _repromotePattern(patternHash, updated);
+      }
+
+      // Auto-freeze: pattern has been demoted too many times
+      if ((updated.demotion_count || 0) >= MAX_DEMOTIONS_BEFORE_FREEZE && !existing.is_frozen) {
+        await update('learning_patterns', p => p.pattern_hash === patternHash, () => ({
+          is_frozen:          true,
+          promoted_to_level1: false,
+          workflow_playbook:  null,
+        }));
+        await insert('audit_logs', {
+          transaction_id: null,
+          event_type:    'pattern_frozen',
+          event_summary: `🧊 Pattern ${patternHash} FROZEN — ${MAX_DEMOTIONS_BEFORE_FREEZE} demotions exceeded, autonomous workflow disabled permanently`,
+          event_data:    { pattern_hash: patternHash, demotion_count: updated.demotion_count },
+          actor: 'AI', severity: 'warning',
+        });
+        console.warn(`🧊 Pattern ${patternHash} FROZEN permanently`);
+      }
     } else {
-      // Resubmission — only update QA pairs, never touch decision counts
+      // Resubmission — only update QA pairs, never touch decision statistics
       await update('learning_patterns', p => p.pattern_hash === patternHash, () => ({
         learned_qa_pairs:    allQA,
         mir_category_counts: catCounts,
       }));
     }
   } else {
-    const approveW = decision === 'approve' ? confWeight : 0;
-    const declineW = decision === 'decline' ? confWeight : 0;
+    // ── New pattern ───────────────────────────────────────────────────────────
+    // 1.5 Cross-pattern transfer: warm-start from a sibling pattern that shares
+    // sec_code + transaction_type but uses a different amount bucket.
+    let transferApproveW = 0, transferDeclineW = 0, transferSource = null;
+    try {
+      const primaryBucket = getAmountBucket(txn.amount);
+      const siblings = await queryAll('learning_patterns',
+        p => p.promoted_to_level1 === true
+          && p.is_frozen !== true
+          && p.feature_vector?.sec_code        === txn.sec_code
+          && p.feature_vector?.transaction_type === txn.transaction_type
+          && p.feature_vector?.amount_bucket    !== primaryBucket
+      );
+
+      if (siblings.length > 0) {
+        // Pick the sibling with the highest confidence × total_decisions product
+        const bestSibling = siblings.reduce((best, s) =>
+          ((s.confidence_score || 0) * (s.total_decisions || 0)) >
+          ((best.confidence_score || 0) * (best.total_decisions || 0)) ? s : best
+        , siblings[0]);
+
+        if ((bestSibling.confidence_score || 0) >= CONF_THRESHOLD) {
+          transferApproveW = (bestSibling.approve_weight || 0) * TRANSFER_WEIGHT;
+          transferDeclineW = (bestSibling.decline_weight || 0) * TRANSFER_WEIGHT;
+          transferSource   = bestSibling.pattern_hash;
+          console.log(`[LearningPipeline] 1.5 Transfer: sibling ${transferSource} → new ${patternHash} (${Math.round(bestSibling.confidence_score * 100)}% conf, ${TRANSFER_WEIGHT * 100}% weight)`);
+        }
+      }
+    } catch (e) {
+      console.warn('[LearningPipeline] Cross-pattern transfer lookup failed (non-fatal):', e.message);
+    }
+
+    const approveW    = transferApproveW + (decision === 'approve' ? confWeight : 0);
+    const declineW    = transferDeclineW + (decision === 'decline' ? confWeight : 0);
+    // 1.1 Bayesian prior applied from the first decision
+    const initialConf = (approveW + BETA_PRIOR_A) / (approveW + declineW + BETA_PRIOR_A + BETA_PRIOR_B);
+
     await insert('learning_patterns', {
       pattern_hash:           patternHash,
       pattern_description:    description,
@@ -313,7 +444,8 @@ async function _updatePatternFromLifecycle(txn, decision, reviewData, riskResult
       mir_category_counts:    Object.fromEntries(categoriesUsed.map(c => [c, 1])),
       approve_weight:         approveW,
       decline_weight:         declineW,
-      confidence_score:       approveW / (approveW + declineW + 0.001),
+      confidence_score:       initialConf,
+      transfer_source_hash:   transferSource,
       promoted_to_level1:     false,
       is_frozen:              false,
       demotion_count:         0,
@@ -331,30 +463,44 @@ async function _updatePatternFromLifecycle(txn, decision, reviewData, riskResult
 // ── Promotion ─────────────────────────────────────────────────────────────────
 async function _promotePattern(hash, pattern) {
   const playbook = await _buildWorkflowPlaybook(pattern).catch(() => null);
-
   await update('learning_patterns', p => p.pattern_hash === hash, () => ({
     promoted_to_level1: true,
     promotion_date:     new Date().toISOString(),
-    promotion_reason:   `Auto-promoted: ${pattern.total_decisions} unique transactions, ${Math.round(pattern.confidence_score * 100)}% confidence`,
+    promotion_reason:   `Auto-promoted: ${pattern.total_decisions} decisions, ${Math.round(pattern.confidence_score * 100)}% confidence`,
     workflow_playbook:  playbook,
   }));
-
   await insert('audit_logs', {
     transaction_id: null,
     event_type:    'pattern_promoted',
-    event_summary: `🚀 Pattern ${hash} promoted — autonomous workflow enabled (${Math.round(pattern.confidence_score * 100)}% confidence, ${pattern.total_decisions} decisions)`,
+    event_summary: `🚀 Pattern ${hash} PROMOTED — autonomous workflow enabled (${Math.round(pattern.confidence_score * 100)}% conf, ${pattern.total_decisions} decisions)`,
     event_data:    { pattern_hash: hash, total_decisions: pattern.total_decisions, confidence: pattern.confidence_score, playbook_rounds: playbook?.expected_rounds },
     actor: 'AI', severity: 'info',
   });
-
   console.log(`\n🚀 Pattern ${hash} PROMOTED — autonomous workflow active`);
-  console.log(`   Confidence: ${Math.round(pattern.confidence_score * 100)}% | Decisions: ${pattern.total_decisions} | Avg MIR rounds: ${pattern.avg_rounds_to_resolve}`);
+  console.log(`   Confidence: ${Math.round(pattern.confidence_score * 100)}% | Decisions: ${pattern.total_decisions}`);
+}
+
+// 1.4 Re-promotion with elevated confidence threshold
+async function _repromotePattern(hash, pattern) {
+  const playbook = await _buildWorkflowPlaybook(pattern).catch(() => null);
+  await update('learning_patterns', p => p.pattern_hash === hash, () => ({
+    promoted_to_level1: true,
+    promotion_date:     new Date().toISOString(),
+    promotion_reason:   `Re-promoted: ${pattern.total_decisions} decisions, ${Math.round(pattern.confidence_score * 100)}% confidence (elevated 90% threshold after ${pattern.demotion_count} demotion(s))`,
+    workflow_playbook:  playbook,
+  }));
+  await insert('audit_logs', {
+    transaction_id: null,
+    event_type:    'pattern_repromoted',
+    event_summary: `↗️ Pattern ${hash} RE-PROMOTED — autonomous workflow re-enabled (${Math.round(pattern.confidence_score * 100)}% conf, demotion_count=${pattern.demotion_count})`,
+    event_data:    { pattern_hash: hash, total_decisions: pattern.total_decisions, confidence: pattern.confidence_score, demotion_count: pattern.demotion_count },
+    actor: 'AI', severity: 'info',
+  });
+  console.log(`↗️ Pattern ${hash} RE-PROMOTED after recovery (conf=${Math.round(pattern.confidence_score * 100)}%)`);
 }
 
 async function _buildWorkflowPlaybook(pattern) {
   const qaPairs = pattern.learned_qa_pairs || [];
-
-  // Group by round, find dominant category + best template per round
   const byRound = {};
   qaPairs.forEach(qa => {
     if (!byRound[qa.round]) byRound[qa.round] = [];
@@ -366,8 +512,7 @@ async function _buildWorkflowPlaybook(pattern) {
     items.forEach(i => { catFreq[i.category] = (catFreq[i.category] || 0) + 1; });
     const category = Object.entries(catFreq).sort((a, b) => b[1] - a[1])[0]?.[0];
     const bestMsg  = items[items.length - 1]?.message_template || '';
-    const ledToDecision = items.filter(i => i.led_to_decision).length / items.length;
-
+    const ledToDecision = items.filter(i => i.led_to_decision).length / Math.max(items.length, 1);
     return {
       round:               parseInt(round),
       category,
@@ -379,7 +524,6 @@ async function _buildWorkflowPlaybook(pattern) {
   const approveRate      = pattern.approve_count / Math.max(pattern.total_decisions, 1);
   const expectedDecision = approveRate >= 0.5 ? 'approve' : 'decline';
 
-  // Ask LLM for a human-readable summary of this playbook
   const llmPrompt = [
     `You are an ACH compliance AI. Summarise this learned transaction workflow in 2 sentences.`,
     `Pattern: ${pattern.pattern_description}`,
@@ -406,26 +550,53 @@ async function _buildWorkflowPlaybook(pattern) {
 
 async function _demotePattern(hash, conf) {
   const existing = await queryOne('learning_patterns', p => p.pattern_hash === hash);
+  const newDemotionCount = (existing?.demotion_count || 0) + 1;
   await update('learning_patterns', p => p.pattern_hash === hash, () => ({
     promoted_to_level1: false,
-    demotion_count:     (existing?.demotion_count || 0) + 1,
+    demotion_count:     newDemotionCount,
     promotion_date:     null,
     workflow_playbook:  null,
   }));
   await insert('audit_logs', {
     transaction_id: null,
     event_type:    'pattern_demoted',
-    event_summary: `⬇️ Pattern ${hash} DEMOTED — autonomous workflow disabled (confidence: ${Math.round(conf * 100)}%)`,
-    event_data:    { pattern_hash: hash, confidence: conf },
+    event_summary: `⬇️ Pattern ${hash} DEMOTED — autonomous workflow disabled (conf: ${Math.round(conf * 100)}%, demotion #${newDemotionCount})`,
+    event_data:    { pattern_hash: hash, confidence: conf, demotion_count: newDemotionCount },
     actor: 'AI', severity: 'warning',
   });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — AUTONOMOUS WORKFLOW ENGINE
+// Applies improvement 1.6 (L3 conflict guard)
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function runAutonomousWorkflow(txn, riskResult, pattern) {
+  // ── 1.6 Safety guard ─────────────────────────────────────────────────────
+  // A promoted pattern that matched a L2 transaction during training must never
+  // auto-approve the same pattern if it now arrives as L3 (e.g. SEC code changed
+  // to IAT, or OFAC flag added). Risk level and score are both gated.
+  const effectiveLevel = riskResult.riskLevel || txn.risk_level || 1;
+  const effectiveScore = riskResult.riskScore || txn.risk_score || 0;
+
+  if (effectiveLevel > AUTONOMY_MAX_RISK_LEVEL || effectiveScore > AUTONOMY_MAX_SCORE) {
+    const reason = `Autonomous workflow blocked: risk exceeds safety limit (L${effectiveLevel}, score ${effectiveScore} — max L${AUTONOMY_MAX_RISK_LEVEL}/score ${AUTONOMY_MAX_SCORE})`;
+    console.warn(`🛡️ [AI_AUTOMATION] ${reason} for ${txn.transaction_id}`);
+    await _escalateToHuman(txn, reason);
+    await insert('audit_logs', {
+      transaction_id: txn.transaction_id,
+      event_type:    'ai_autonomy_blocked',
+      event_summary: `🛡️ Autonomy blocked — ${reason}`,
+      event_data:    {
+        pattern_hash: pattern.pattern_hash,
+        risk_level:   effectiveLevel, risk_score: effectiveScore,
+        max_level:    AUTONOMY_MAX_RISK_LEVEL, max_score: AUTONOMY_MAX_SCORE,
+      },
+      actor: 'AI_AUTOMATION', severity: 'warning',
+    });
+    return;
+  }
+
   console.log(`\n🤖 AI_AUTOMATION: Starting autonomous workflow for ${txn.transaction_id}`);
 
   await update('transactions', t => t.transaction_id === txn.transaction_id, () => ({
@@ -448,7 +619,6 @@ async function runAutonomousWorkflow(txn, riskResult, pattern) {
     actor: 'AI_AUTOMATION', severity: 'info',
   });
 
-  // Fire first round asynchronously — don't block the intake response
   _executeWorkflowRound(txn, riskResult, pattern, 1).catch(e => {
     console.error(`[AI_AUTOMATION] Workflow round 1 error for ${txn.transaction_id}:`, e.message);
   });
@@ -460,11 +630,10 @@ async function _executeWorkflowRound(txn, riskResult, pattern, roundNumber) {
 
   const playbookRound = playbook.rounds.find(r => r.round === roundNumber)
     || playbook.rounds[playbook.rounds.length - 1];
-
   if (!playbookRound) return;
 
   const message = await _generateRequestMessage(txn, playbookRound, pattern)
-    .catch(() => playbookRound.message_template);
+    .catch(() => playbookRound.message_template || 'Please provide additional information for this transaction.');
 
   const { recordAutoMirRequest } = require('../routes/infoRequests');
   await recordAutoMirRequest(txn, playbookRound.category, message, pattern.pattern_hash, roundNumber);
@@ -477,43 +646,40 @@ async function _generateRequestMessage(txn, playbookRound, pattern) {
   const prompt = [
     `You are an ACH compliance AI sending an information request to a transaction originator.`,
     `Transaction: ${txn.sec_code} ${txn.transaction_type} $${txn.amount} from ${txn.company_name}`,
-    `Information needed: ${playbookRound.category.replace(/_/g, ' ').toLowerCase()}`,
+    `Information needed: ${(playbookRound.category || '').replace(/_/g, ' ').toLowerCase()}`,
     `Template from past cases: "${playbookRound.message_template}"`,
     `Write a clear, professional 2-3 sentence request for this specific transaction.`,
     `Do not mention risk scores, internal systems, or policy numbers.`,
     `Respond with ONLY the message text.`,
   ].join('\n');
-  return (await _callLLM(prompt)) || playbookRound.message_template;
+  return (await _callLLM(prompt)) || playbookRound.message_template || 'Please provide additional information regarding this transaction.';
 }
 
-// evaluateOriginatorResponse — called by infoRequests.js when originator responds
-// to an AI-initiated portal request
 async function evaluateOriginatorResponse(txn, infoRequest, responseMessage, pattern) {
-  // Always check for human override first
+  // Always check for human override before doing anything
   const freshTxn = await queryOne('transactions', t => t.transaction_id === txn.transaction_id);
   if (freshTxn?.ai_human_override) {
     console.log(`[AI_AUTOMATION] Human override active for ${txn.transaction_id} — stopping`);
     return { action: 'human_override' };
   }
 
-  await recordLifecycleResponse(txn.transaction_id, infoRequest.round_number, responseMessage);
+  await recordLifecycleResponse(txn.transaction_id, infoRequest.round_number, responseMessage || '');
 
   const riskResult = { riskLevel: txn.risk_level, riskScore: txn.risk_score, riskFlags: txn.risk_flags || [] };
   const qaPairs    = pattern.learned_qa_pairs || [];
 
-  // Build examples from learned history for this specific category
   const examples = qaPairs
     .filter(qa => qa.category === infoRequest.category && qa.response_example)
     .slice(-5)
     .map(qa =>
-      `Response: "${qa.response_example.slice(0, 150)}" → ` +
+      `Response: "${(qa.response_example || '').slice(0, 150)}" → ` +
       (qa.led_to_decision ? `Final: ${qa.final_outcome}` : 'Led to another info request')
     ).join('\n');
 
   const prompt = [
     `You are an ACH compliance AI evaluating an originator's response.`,
     ``,
-    `Transaction: ${txn.sec_code} ${txn.transaction_type?.toUpperCase()} $${txn.amount} from ${txn.company_name}`,
+    `Transaction: ${txn.sec_code} ${(txn.transaction_type || '').toUpperCase()} $${txn.amount} from ${txn.company_name}`,
     `Risk score: ${txn.risk_score}/100`,
     `Category requested (${infoRequest.category}): "${infoRequest.message}"`,
     `Originator's response: "${responseMessage}"`,
@@ -546,22 +712,18 @@ async function evaluateOriginatorResponse(txn, infoRequest, responseMessage, pat
       console.warn('[AI_AUTOMATION] JSON parse failed — using heuristic');
     }
   }
-
   if (!evaluation) {
     evaluation = _heuristicEvaluation(responseMessage, infoRequest, pattern);
   }
 
   console.log(`🤖 AI_AUTOMATION: Evaluated response for ${txn.transaction_id} → ${evaluation.action} (${Math.round((evaluation.confidence || 0) * 100)}%)`);
 
-  // Execute the decision
   const MAX_ROUNDS = parseInt(process.env.MIR_MAX_ROUNDS || '5');
 
   if (evaluation.action === 'approve') {
     await _aiApprove(txn, riskResult, evaluation.reason, pattern);
-
   } else if (evaluation.action === 'decline') {
     await _aiDecline(txn, riskResult, evaluation.reason, pattern);
-
   } else if (evaluation.action === 'more_info') {
     if (infoRequest.round_number >= MAX_ROUNDS) {
       await _escalateToHuman(txn, `Maximum MIR rounds (${MAX_ROUNDS}) reached without resolution.`);
@@ -570,7 +732,7 @@ async function evaluateOriginatorResponse(txn, infoRequest, responseMessage, pat
     const nextRound    = infoRequest.round_number + 1;
     const nextCategory = evaluation.next_category || infoRequest.category;
     const nextMessage  = await _generateFollowUpMessage(txn, nextCategory, responseMessage, pattern)
-      .catch(() => `Thank you for your response. We still need additional information regarding ${nextCategory.replace(/_/g, ' ').toLowerCase()}.`);
+      .catch(() => `Thank you for your response. We still need additional information regarding ${(nextCategory || '').replace(/_/g, ' ').toLowerCase()}.`);
 
     const { recordAutoMirRequest } = require('../routes/infoRequests');
     await recordAutoMirRequest(txn, nextCategory, nextMessage, pattern.pattern_hash, nextRound);
@@ -579,7 +741,7 @@ async function evaluateOriginatorResponse(txn, infoRequest, responseMessage, pat
     await insert('audit_logs', {
       transaction_id: txn.transaction_id,
       event_type:    'ai_followup_requested',
-      event_summary: `🤖 AI_AUTOMATION: Round ${nextRound} — ${nextCategory.replace(/_/g, ' ')}`,
+      event_summary: `🤖 AI_AUTOMATION: Round ${nextRound} — ${(nextCategory || '').replace(/_/g, ' ')}`,
       event_data:    { round: nextRound, category: nextCategory, evaluation_reason: evaluation.reason },
       actor: 'AI_AUTOMATION', severity: 'info',
     });
@@ -588,10 +750,11 @@ async function evaluateOriginatorResponse(txn, infoRequest, responseMessage, pat
   return evaluation;
 }
 
-// Heuristic fallback for when LLM is unavailable
+// Heuristic fallback when LLM is unavailable
 function _heuristicEvaluation(responseMessage, infoRequest, pattern) {
-  const lower       = responseMessage.toLowerCase();
-  const wordCount   = responseMessage.trim().split(/\s+/).length;
+  const msg        = responseMessage || '';
+  const lower      = msg.toLowerCase();
+  const wordCount  = msg.trim().split(/\s+/).filter(Boolean).length;
   const approveRate = pattern.approve_count / Math.max(pattern.total_decisions, 1);
 
   if (wordCount < 10) {
@@ -615,13 +778,13 @@ function _heuristicEvaluation(responseMessage, infoRequest, pattern) {
 async function _generateFollowUpMessage(txn, nextCategory, previousResponse, pattern) {
   const prompt = [
     `You are an ACH compliance AI. The originator responded but you need more information.`,
-    `Their response: "${previousResponse.slice(0, 200)}"`,
-    `You now need: ${nextCategory.replace(/_/g, ' ').toLowerCase()}`,
+    `Their response: "${(previousResponse || '').slice(0, 200)}"`,
+    `You now need: ${(nextCategory || '').replace(/_/g, ' ').toLowerCase()}`,
     `Write a polite 2-sentence follow-up acknowledging their response and asking for the additional information.`,
     `Respond with ONLY the message text.`,
   ].join('\n');
   return (await _callLLM(prompt))
-    || `Thank you for your response. We require additional documentation for ${nextCategory.replace(/_/g, ' ').toLowerCase()} before we can process this transaction.`;
+    || `Thank you for your response. We require additional documentation for ${(nextCategory || '').replace(/_/g, ' ').toLowerCase()} before we can process this transaction.`;
 }
 
 async function _aiApprove(txn, riskResult, reason, pattern) {
@@ -695,7 +858,7 @@ async function _escalateToHuman(txn, reason) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SECTION 4 — EXISTING PUBLIC API (unchanged signatures)
+// SECTION 4 — PUBLIC API
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function recordDecision(txn, decision, reviewData, riskResult) {
@@ -753,7 +916,6 @@ async function recordDecision(txn, decision, reviewData, riskResult) {
     ai_confidence_at_decision:     txn.ai_confidence || null,
   });
 
-  // Seal the lifecycle — triggers pattern learning
   await finaliseLifecycle(txn, decision, { ...reviewData, _actorType: 'HUMAN' }, riskResult);
 
   await insert('audit_logs', {
@@ -766,9 +928,16 @@ async function recordDecision(txn, decision, reviewData, riskResult) {
   });
 }
 
+// 1.3 checkPatternMatch now checks the primary hash AND the adjacent bucket hash
 async function checkPatternMatch(txn, riskFlags) {
-  const hash = generatePatternHash(txn, riskFlags);
-  return await queryOne('learning_patterns', p => p.pattern_hash === hash && p.promoted_to_level1 && !p.is_frozen) || null;
+  const hashes = generatePatternHashes(txn, riskFlags);
+  for (const hash of hashes) {
+    const match = await queryOne('learning_patterns',
+      p => p.pattern_hash === hash && p.promoted_to_level1 === true && p.is_frozen !== true
+    );
+    if (match) return match;
+  }
+  return null;
 }
 
 async function recordMirDecision(txn, category, actorType, riskResult) {
@@ -793,6 +962,8 @@ async function recordMirDecision(txn, category, actorType, riskResult) {
 async function getLearningStats() {
   const all      = await queryAll('learning_patterns');
   const promoted = all.filter(p => p.promoted_to_level1);
+  const frozen   = all.filter(p => p.is_frozen);
+  const transferred = all.filter(p => p.transfer_source_hash);
   const totalDec = all.reduce((a, p) => a + (p.total_decisions || 0), 0);
   const totalRev = (await queryAll('review_decisions')).length;
 
@@ -806,6 +977,8 @@ async function getLearningStats() {
   return {
     totalPatterns:        all.length,
     promotedPatterns:     promoted.length,
+    frozenPatterns:       frozen.length,
+    transferredPatterns:  transferred.length,
     totalHumanDecisions:  totalDec,
     totalRichReviews:     totalRev,
     promotionRate:        all.length > 0 ? Math.round((promoted.length / all.length) * 100) : 0,
@@ -817,17 +990,20 @@ async function getLearningStats() {
 }
 
 module.exports = {
-  // Existing exports — unchanged
+  // Core public API (unchanged signatures)
   recordDecision,
   checkPatternMatch,
   getLearningStats,
-  // New exports
+  // Lifecycle tracking
   recordMirDecision,
   startLifecycle,
   recordLifecycleRequest,
   recordLifecycleResponse,
   finaliseLifecycle,
+  // Autonomous workflow
   runAutonomousWorkflow,
   evaluateOriginatorResponse,
+  // Utilities
   generatePatternHash,
+  generatePatternHashes,
 };
