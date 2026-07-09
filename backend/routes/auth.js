@@ -43,6 +43,7 @@ async function sendWelcomeEmail({ to, full_name, username, password, role }) {
 
   const resendApiKey = process.env.RESEND_API_KEY;
   const fromAddr = process.env.RESEND_FROM || 'onboarding@resend.dev'; // Resend's default testing address
+  let emailSent = false;
 
   if (resendApiKey) {
     try {
@@ -57,15 +58,42 @@ async function sendWelcomeEmail({ to, full_name, username, password, role }) {
       });
 
       if (error) {
-        console.warn('[Auth] ⚠️  Email send failed:', error.message);
-        return { sent: false, error: error.message };
+        console.warn('[Auth] ⚠️  Resend email send failed:', error.message, '— Falling back to SMTP (Nodemailer)');
+      } else {
+        console.log('[Auth] ✅ Welcome email sent via Resend to:', to, 'ID:', data?.id);
+        emailSent = true;
+        return { sent: true };
       }
+    } catch (e) {
+      console.warn('[Auth] ⚠️  Resend email send failed:', e.message, '— Falling back to SMTP (Nodemailer)');
+    }
+  }
 
-      console.log('[Auth] ✅ Welcome email sent to:', to, 'ID:', data?.id);
+  if (!emailSent && process.env.SMTP_HOST) {
+    try {
+      const nodemailer = require('nodemailer');
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: parseInt(process.env.SMTP_PORT || '587'),
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      });
+
+      const info = await transporter.sendMail({
+        from: `"${process.env.SMTP_FROM || 'ACH Triage'}" <${process.env.SMTP_USER}>`,
+        to: to,
+        subject: subject,
+        text: body,
+      });
+
+      console.log('[Auth] ✅ Welcome email sent via Nodemailer to:', to, 'MessageId:', info.messageId);
+      emailSent = true;
       return { sent: true };
     } catch (e) {
-      console.warn('[Auth] ⚠️  Email send failed:', e.message);
-      return { sent: false, error: e.message };
+      console.warn('[Auth] ⚠️  Nodemailer email send failed:', e.message);
     }
   }
 
@@ -77,7 +105,7 @@ async function sendWelcomeEmail({ to, full_name, username, password, role }) {
   console.log('║  Password: ' + password);
   console.log('║  Role    : ' + roleLabel);
   console.log('╚══════════════════════════════════════════╝\n');
-  return { sent: false, reason: 'SMTP not configured — credentials logged to server console' };
+  return { sent: false, reason: 'Both Resend and SMTP failed — credentials logged to server console' };
 }
 
 function generatePassword(len = 12) {

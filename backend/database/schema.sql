@@ -164,3 +164,30 @@ CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_transaction ON audit_logs(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_event ON audit_logs(event_type);
 CREATE INDEX IF NOT EXISTS idx_human_decisions_transaction ON human_decisions(transaction_id);
+
+-- ============================================================
+-- THRESHOLD CONFIGURATION
+-- ============================================================
+CREATE TABLE IF NOT EXISTS threshold_config (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  _doc_key TEXT UNIQUE NOT NULL,
+  key TEXT NOT NULL,
+  value REAL NOT NULL,
+  description TEXT,
+  calibrated_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ============================================================
+-- SEC CODE CONFIGURATION
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sec_code_config (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  _doc_key TEXT UNIQUE NOT NULL,
+  sec_code TEXT NOT NULL,
+  multiplier REAL NOT NULL,
+  description TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -18,7 +18,7 @@ function initGemini() {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       genAI = new GoogleGenerativeAI(key);
       geminiModel = genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash-lite',
+        model: 'gemini-3.5-flash',
         generationConfig: { temperature: 0.15, maxOutputTokens: 1024 },
       });
       console.log('✅ Gemini AI initialized (Real Mode)');
@@ -41,16 +41,16 @@ async function callLLM(prompt) {
 // ── 4.2 Brief tier selector ───────────────────────────────────────────────────
 // Drives prompt verbosity/depth. Keeps cheap for simple cases; invests detail where it matters.
 function _getBriefTier(riskResult) {
-  const level        = riskResult.riskLevel || 1;
-  const score        = riskResult.riskScore || 0;
-  const flags        = riskResult.riskFlags || [];
-  const criticalCnt  = flags.filter(f => f.flag_level === 3).length;
-  const fingerprint  = riskResult.riskFingerprint;
-  const inBoundary   = !!fingerprint?.boundary_zone;
+  const level = riskResult.riskLevel || 1;
+  const score = riskResult.riskScore || 0;
+  const flags = riskResult.riskFlags || [];
+  const criticalCnt = flags.filter(f => f.flag_level === 3).length;
+  const fingerprint = riskResult.riskFingerprint;
+  const inBoundary = !!fingerprint?.boundary_zone;
 
   if (level === 3 || criticalCnt >= 2 || score >= 75 || inBoundary) return 'deep';
-  if (level === 2 && flags.length <= 1 && score < 45)               return 'minimal';
-  if (level === 2)                                                    return 'standard';
+  if (level === 2 && flags.length <= 1 && score < 45) return 'minimal';
+  if (level === 2) return 'standard';
   return 'minimal'; // L1 (shouldn't normally reach generateReviewBrief)
 }
 
@@ -63,13 +63,13 @@ async function getAiScoreAdjustment(txn, riskResult) {
     return { delta: 0, reason: 'L1 transaction — no AI score adjustment applied', confidence: 0 };
   }
 
-  const flags      = (riskResult.riskFlags || [])
+  const flags = (riskResult.riskFlags || [])
     .map(f => `${f.rule_code}: ${f.rule_name} (level ${f.flag_level}, contrib ${f.contribution})`)
     .join('\n') || 'None';
-  const fp         = riskResult.riskFingerprint || {};
-  const secMult    = fp.sec_multiplier ? `${txn.sec_code} multiplier=${fp.sec_multiplier}` : txn.sec_code;
-  const trustInfo  = fp.trust_multiplier ? `Trust multiplier=${fp.trust_multiplier}` : 'No trust data';
-  const boundary   = fp.boundary_zone   ? `⚠️ Near boundary: ${fp.boundary_zone}` : 'Not near a boundary';
+  const fp = riskResult.riskFingerprint || {};
+  const secMult = fp.sec_multiplier ? `${txn.sec_code} multiplier=${fp.sec_multiplier}` : txn.sec_code;
+  const trustInfo = fp.trust_multiplier ? `Trust multiplier=${fp.trust_multiplier}` : 'No trust data';
+  const boundary = fp.boundary_zone ? `⚠️ Near boundary: ${fp.boundary_zone}` : 'Not near a boundary';
 
   const prompt = [
     `You are an ACH risk AI calibrating a transaction's risk score upward if warranted.`,
@@ -103,7 +103,7 @@ async function getAiScoreAdjustment(txn, riskResult) {
     // Strip any accidental markdown fencing
     const clean = (raw || '').replace(/```json|```/g, '').trim();
     parsed = JSON.parse(clean);
-  } catch (_) {}
+  } catch (_) { }
 
   if (!parsed || typeof parsed.delta !== 'number') {
     return { delta: 0, reason: 'AI adjustment parse failed — no change', confidence: 0 };
@@ -111,19 +111,19 @@ async function getAiScoreAdjustment(txn, riskResult) {
 
   // Enforce bounds regardless of what model returns
   const confidence = Math.max(0, Math.min(1, parseFloat(parsed.confidence) || 0));
-  const rawDelta   = Math.round(parseFloat(parsed.delta) || 0);
-  const delta      = confidence >= 0.70 ? Math.max(0, Math.min(15, rawDelta)) : 0;
+  const rawDelta = Math.round(parseFloat(parsed.delta) || 0);
+  const delta = confidence >= 0.70 ? Math.max(0, Math.min(15, rawDelta)) : 0;
 
   return {
     delta,
-    reason:     String(parsed.reason || '').slice(0, 200),
+    reason: String(parsed.reason || '').slice(0, 200),
     confidence,
   };
 }
 
 // ── generateReviewBrief (tiered) ──────────────────────────────────────────────
 async function generateReviewBrief(txn, riskResult) {
-  const tier  = _getBriefTier(riskResult);
+  const tier = _getBriefTier(riskResult);
   const brief = await _buildBriefByTier(txn, riskResult, tier);
   return {
     brief,
@@ -134,13 +134,13 @@ async function generateReviewBrief(txn, riskResult) {
 }
 
 async function _buildBriefByTier(txn, riskResult, tier) {
-  const flags    = (riskResult.riskFlags || [])
+  const flags = (riskResult.riskFlags || [])
     .map(f => `  - [${f.severity.toUpperCase()}] ${f.rule_code}: ${f.rule_name} — ${f.description}`)
     .join('\n') || '  None';
-  const fp       = riskResult.riskFingerprint || {};
+  const fp = riskResult.riskFingerprint || {};
   const boundary = fp.boundary_zone ? `⚠️ NEAR LEVEL BOUNDARY: ${fp.boundary_zone}` : '';
-  const trust    = fp.trust_multiplier !== 1.0 ? `Trust multiplier: ${fp.trust_multiplier}` : '';
-  const secInfo  = fp.sec_multiplier ? `SEC ${txn.sec_code} threshold multiplier: ${fp.sec_multiplier}` : '';
+  const trust = fp.trust_multiplier !== 1.0 ? `Trust multiplier: ${fp.trust_multiplier}` : '';
+  const secInfo = fp.sec_multiplier ? `SEC ${txn.sec_code} threshold multiplier: ${fp.sec_multiplier}` : '';
 
   if (tier === 'minimal') {
     const prompt = [
@@ -239,12 +239,12 @@ async function generateComplianceNotes(txn, riskResult) {
 // ── Brief regeneration after human action (unchanged structure) ───────────────
 async function regenerateBriefForOperation(txn, riskResult, operation, context) {
   const { companyTransactions = [], infoRequests = [], operationDetails = {} } = context;
-  const otherTxns    = companyTransactions.filter(t => t.transaction_id !== txn.transaction_id);
-  const totalCount   = otherTxns.length;
+  const otherTxns = companyTransactions.filter(t => t.transaction_id !== txn.transaction_id);
+  const totalCount = otherTxns.length;
   const approvedCount = otherTxns.filter(t => ['approved', 'auto_approved'].includes(t.status)).length;
   const declinedCount = otherTxns.filter(t => t.status === 'declined').length;
-  const approvalRate  = totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 'N/A';
-  const avgAmount     = totalCount > 0
+  const approvalRate = totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 'N/A';
+  const avgAmount = totalCount > 0
     ? (otherTxns.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0) / totalCount).toFixed(2)
     : 'N/A';
   const recentTxns = otherTxns.slice(0, 5)
@@ -258,14 +258,14 @@ async function regenerateBriefForOperation(txn, riskResult, operation, context) 
   const mirHistory = infoRequests.length === 0
     ? 'No information requests on record.'
     : infoRequests.map(r => {
-        const lines = [
-          `  Round ${r.round_number} [${r.actor_type}] — ${(r.category || '').replace(/_/g, ' ')}`,
-          `  Request: ${(r.message || '').slice(0, 150)}`,
-        ];
-        if (r.status === 'responded') lines.push(`  Response: ${(r.response_message || '').slice(0, 250)}`);
-        else lines.push(`  Status: ${r.status}`);
-        return lines.join('\n');
-      }).join('\n\n');
+      const lines = [
+        `  Round ${r.round_number} [${r.actor_type}] — ${(r.category || '').replace(/_/g, ' ')}`,
+        `  Request: ${(r.message || '').slice(0, 150)}`,
+      ];
+      if (r.status === 'responded') lines.push(`  Response: ${(r.response_message || '').slice(0, 250)}`);
+      else lines.push(`  Status: ${r.status}`);
+      return lines.join('\n');
+    }).join('\n\n');
 
   let opContext = '';
   if (operation === 'approved') {
@@ -328,12 +328,12 @@ async function regenerateBriefForOperation(txn, riskResult, operation, context) 
 // ── Simulation fallbacks (used when Gemini key is absent) ────────────────────
 function simulate(prompt) {
   const ts = new Date().toISOString();
-  if (prompt.includes('DECISION: APPROVED'))         return simulateApproved(ts);
-  if (prompt.includes('DECISION: DECLINED'))         return simulateDeclined(ts);
+  if (prompt.includes('DECISION: APPROVED')) return simulateApproved(ts);
+  if (prompt.includes('DECISION: DECLINED')) return simulateDeclined(ts);
   if (prompt.includes('MORE INFORMATION REQUESTED')) return simulateMirRequested(ts);
-  if (prompt.includes('ORIGINATOR RESPONDED'))       return simulateInfoReceived(ts);
+  if (prompt.includes('ORIGINATOR RESPONDED')) return simulateInfoReceived(ts);
   if (prompt.includes('Level 1') || prompt.includes('compliance notes')) return simulateL1(ts);
-  if (prompt.includes('Level 3') || prompt.includes('HIGH-RISK'))        return simulateBrief(ts, 3);
+  if (prompt.includes('Level 3') || prompt.includes('HIGH-RISK')) return simulateBrief(ts, 3);
   return simulateBrief(ts, 2);
 }
 
@@ -436,7 +436,7 @@ function simulateL1(ts) {
 }
 
 function simulateBrief(ts, level) {
-  const tier       = level === 3 ? 'DEEP' : 'STANDARD';
+  const tier = level === 3 ? 'DEEP' : 'STANDARD';
   const levelLabel = level === 3 ? '🔴 HIGH-RISK (Level 3)' : '🟡 MEDIUM-RISK (Level 2)';
   const decisionHint = level === 3 ? 'DECLINE RECOMMENDED' : 'CAREFUL REVIEW REQUIRED';
   const declineReason = level === 3
@@ -460,13 +460,13 @@ This transaction exceeds the zero-touch threshold and requires human review. All
 
 ### Risk Profile
 Evaluated against 25 active NACHA risk rules. ${level === 3
-  ? 'Critical-level flags triggered — mandatory human oversight required.'
-  : 'Medium-risk flags triggered — elevated scrutiny warranted.'}
+      ? 'Critical-level flags triggered — mandatory human oversight required.'
+      : 'Medium-risk flags triggered — elevated scrutiny warranted.'}
 
 ### AI Recommendation
 **→ ${decisionHint}** — ${level === 3
-  ? 'High-risk indicators present. Decline unless reviewer confirms legitimacy.'
-  : 'Verify counterparty identity and confirm business purpose before approving.'}
+      ? 'High-risk indicators present. Decline unless reviewer confirms legitimacy.'
+      : 'Verify counterparty identity and confirm business purpose before approving.'}
 ${counterfactual}
 
 ### Pre-Populated Compliance Checklist

@@ -1,11 +1,11 @@
 // backend/routes/chatbot.js — Intelligent ACH Chatbot: Natural LLM + Approve/Reject + CRUD
 const express = require('express');
-const router  = express.Router();
+const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { queryAll, queryOne, insert, update, remove } = require('../database/db');
-const { getLearningStats }   = require('../services/learningPipeline');
+const { getLearningStats } = require('../services/learningPipeline');
 const { authenticate, optionalAuth } = require('../middleware/auth');
-const { scoreTransaction }   = require('../services/riskEngine');
+const { scoreTransaction } = require('../services/riskEngine');
 const { generateComplianceNotes, generateReviewBrief } = require('../services/aiTriage');
 const { recordDecision } = require('../services/learningPipeline');
 
@@ -18,7 +18,7 @@ function initLLM() {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(key);
       geminiModel = genAI.getGenerativeModel({
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.5-flash',
         generationConfig: { temperature: 0.75, topP: 0.9, maxOutputTokens: 2048 }
       });
       console.log('[Chatbot] Gemini initialized');
@@ -46,12 +46,12 @@ async function callGemini(prompt) {
 function contextualFallback(prompt) {
   const p = prompt;
   const get = (rx) => { const m = p.match(rx); return m ? m[1] : '?'; };
-  const total    = get(/Total Transactions:\s*(\d+)/);
-  const pending  = get(/Under Review.*?:\s*(\d+)/);
-  const volume   = get(/Total Volume:\s*\$([^\n]+)/);
+  const total = get(/Total Transactions:\s*(\d+)/);
+  const pending = get(/Under Review.*?:\s*(\d+)/);
+  const volume = get(/Total Volume:\s*\$([^\n]+)/);
   const autoRate = get(/(\d+)% auto-resolution/);
-  const l3       = get(/L3\(High\)=(\d+)/);
-  const avgRisk  = get(/Average Risk Score:\s*([\d.]+)/);
+  const l3 = get(/L3\(High\)=(\d+)/);
+  const avgRisk = get(/Average Risk Score:\s*([\d.]+)/);
 
   const q = prompt.toLowerCase();
   if (q.includes('txn-') && p.includes('FULL DETAILS FOR')) {
@@ -91,11 +91,11 @@ function detectDecisionIntent(message) {
   const txnIds = extractTxnIds(message);
 
   const approveMatch = /\b(approve|accept|okay|ok|confirm|process)\b/i.test(m);
-  const rejectMatch  = /\b(reject|decline|deny|refuse|cancel|block)\b/i.test(m);
+  const rejectMatch = /\b(reject|decline|deny|refuse|cancel|block)\b/i.test(m);
 
   if (txnIds.length > 0) {
     if (approveMatch) return { action: 'approve', txnIds };
-    if (rejectMatch)  return { action: 'decline', txnIds };
+    if (rejectMatch) return { action: 'decline', txnIds };
   }
 
   if (approveMatch && (m.includes('transaction') || m.includes('it') || m.includes('this') || m.includes('that'))) {
@@ -129,22 +129,22 @@ function detectUserCreationIntent(message) {
 
 function detectUserListIntent(msg) {
   return /\b(list|show|get|display|who are|all)\s+(all\s+)?(users?|team|staff|members?|roles?)\b/i.test(msg) ||
-         /\b(user|team)\s+(list|roster|overview|management)\b/i.test(msg);
+    /\b(user|team)\s+(list|roster|overview|management)\b/i.test(msg);
 }
 
 function detectExceptionsIntent(msg) {
   return /\b(exceptions?|cutoff|past.?due|overdue|deadline)\b/i.test(msg) &&
-         /\b(list|show|what|which|pending|due|status|check)\b/i.test(msg);
+    /\b(list|show|what|which|pending|due|status|check)\b/i.test(msg);
 }
 
 function detectMirOverviewIntent(msg) {
   return /\b(more.?info|mir\b|info.?request|additional.?info|information.?request|sla)\b/i.test(msg) &&
-         /\b(pending|status|show|list|overview|overdue|expired|waiting)\b/i.test(msg);
+    /\b(pending|status|show|list|overview|overdue|expired|waiting)\b/i.test(msg);
 }
 
 function detectAccountsIntent(msg) {
   return /\b(accounts?|filter.?mode|whitelist|debit.?block|cutoff.?time)\b/i.test(msg) &&
-         /\b(show|list|status|what|view|display|tell|get|configure|config)\b/i.test(msg);
+    /\b(show|list|status|what|view|display|tell|get|configure|config)\b/i.test(msg);
 }
 
 // ── Format transaction detail string for LLM context (ASYNC) ─────────────────
@@ -180,20 +180,20 @@ async function txnDetailForContext(t) {
 
 // ── Build comprehensive live system context (ASYNC) ───────────────────────────
 async function buildLiveContext() {
-  const allTxns      = await queryAll('transactions');
-  const total        = allTxns.length;
+  const allTxns = await queryAll('transactions');
+  const total = allTxns.length;
   const autoApproved = allTxns.filter(t => t.status === 'auto_approved').length;
-  const approved     = allTxns.filter(t => t.status === 'approved').length;
-  const declined     = allTxns.filter(t => t.status === 'declined').length;
-  const pending      = allTxns.filter(t => t.status === 'under_review').length;
+  const approved = allTxns.filter(t => t.status === 'approved').length;
+  const declined = allTxns.filter(t => t.status === 'declined').length;
+  const pending = allTxns.filter(t => t.status === 'under_review').length;
   const l1 = allTxns.filter(t => t.risk_level === 1).length;
   const l2 = allTxns.filter(t => t.risk_level === 2).length;
   const l3 = allTxns.filter(t => t.risk_level === 3).length;
   const totalValue = allTxns.reduce((a, t) => a + (parseFloat(t.amount) || 0), 0);
-  const avgRisk    = total > 0 ? allTxns.reduce((a, t) => a + (parseFloat(t.risk_score) || 0), 0) / total : 0;
-  const todayStr   = new Date().toISOString().split('T')[0];
+  const avgRisk = total > 0 ? allTxns.reduce((a, t) => a + (parseFloat(t.risk_score) || 0), 0) / total : 0;
+  const todayStr = new Date().toISOString().split('T')[0];
   const todayCount = allTxns.filter(t => t.created_at?.startsWith(todayStr)).length;
-  const autoRate   = total > 0 ? Math.round((autoApproved / total) * 100) : 0;
+  const autoRate = total > 0 ? Math.round((autoApproved / total) * 100) : 0;
 
   const [learning, accounts, auditLogs, allUsers, mirPending] = await Promise.all([
     getLearningStats(),
@@ -204,8 +204,8 @@ async function buildLiveContext() {
   ]);
   const mirOverdue = (Array.isArray(mirPending) ? mirPending : []).filter(r => r.sla_deadline_at && new Date(r.sla_deadline_at) < new Date()).length;
 
-  const recentTxns  = allTxns.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
-  const l3Txns      = allTxns.filter(t => t.risk_level === 3);
+  const recentTxns = allTxns.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
+  const l3Txns = allTxns.filter(t => t.risk_level === 3);
   const pendingTxns = allTxns.filter(t => t.status === 'under_review');
 
   const txnIndex = allTxns.map(t =>
@@ -269,39 +269,39 @@ async function executeDecision(txnId, action, reviewer, notes) {
 
   const newStatus = action === 'approve' ? 'approved' : 'declined';
   await update('transactions', t => t.transaction_id === txnId, () => ({
-    status:            newStatus,
+    status: newStatus,
     reviewer_decision: action,
-    reviewer_notes:    notes || 'Decision made via AI Chatbot',
-    decision_at:       new Date().toISOString(),
-    reviewer_id:       reviewer.user_id,
-    reviewer_name:     reviewer.full_name,
+    reviewer_notes: notes || 'Decision made via AI Chatbot',
+    decision_at: new Date().toISOString(),
+    reviewer_id: reviewer.user_id,
+    reviewer_name: reviewer.full_name,
     reviewer_username: reviewer.username,
-    reviewer_role:     reviewer.role,
+    reviewer_role: reviewer.role,
   }));
 
   const riskResult = { riskLevel: txn.risk_level, riskScore: txn.risk_score, riskFlags: txn.risk_flags || [] };
-  recordDecision(txn, action, { additional_notes: notes || 'Via chatbot' }, riskResult).catch(() => {});
+  recordDecision(txn, action, { additional_notes: notes || 'Via chatbot' }, riskResult).catch(() => { });
 
   await insert('audit_logs', {
     transaction_id: txnId,
-    event_type:     action === 'approve' ? 'human_approved' : 'human_declined',
-    event_summary:  (action === 'approve' ? 'Approved' : 'Declined')
+    event_type: action === 'approve' ? 'human_approved' : 'human_declined',
+    event_summary: (action === 'approve' ? 'Approved' : 'Declined')
       + ' via chatbot by ' + reviewer.full_name + ' (' + reviewer.username + ')'
       + ' — ' + txn.company_name + ' $' + txn.amount,
-    event_data:     { decision: action, via: 'chatbot', reviewer: reviewer.username },
-    actor:          reviewer.full_name,
-    severity:       action === 'approve' ? 'info' : 'warning'
+    event_data: { decision: action, via: 'chatbot', reviewer: reviewer.username },
+    actor: reviewer.full_name,
+    severity: action === 'approve' ? 'info' : 'warning'
   });
 
   return {
-    success:    true,
+    success: true,
     txnId,
     action,
-    company:    txn.company_name,
-    amount:     txn.amount,
+    company: txn.company_name,
+    amount: txn.amount,
     newStatus,
-    riskLevel:  txn.risk_level,
-    riskScore:  txn.risk_score,
+    riskLevel: txn.risk_level,
+    riskScore: txn.risk_score,
   };
 }
 
@@ -331,7 +331,7 @@ router.post('/message', optionalAuth, async (req, res) => {
       if (txnIds.length > 0) {
         const results = await Promise.all(txnIds.map(id => executeDecision(id, action, user, null)));
         const successful = results.filter(r => r.success);
-        const failed     = results.filter(r => !r.success);
+        const failed = results.filter(r => !r.success);
 
         let reply = '';
         if (successful.length > 0) {
@@ -379,7 +379,7 @@ router.post('/message', optionalAuth, async (req, res) => {
 
       const { email, role, username, full_name } = userIntent;
       const existing = await queryOne('users', u => u.email.toLowerCase() === email.toLowerCase() || u.username.toLowerCase() === username.toLowerCase());
-      
+
       if (existing) {
         return res.json({ success: true, reply: `A user with the email or username **${email}** already exists.`, source: 'system' });
       }
@@ -406,8 +406,8 @@ router.post('/message', optionalAuth, async (req, res) => {
         actor: user.username, severity: 'info'
       });
 
-      let emailStatusMsg = emailResult?.sent 
-        ? `\n\n📧 An email with login instructions has been sent to **${email}**.` 
+      let emailStatusMsg = emailResult?.sent
+        ? `\n\n📧 An email with login instructions has been sent to **${email}**.`
         : `\n\n⚠️ Could not send welcome email (SMTP may not be configured). Please share these credentials securely.`;
 
       return res.json({
@@ -436,7 +436,7 @@ router.post('/message', optionalAuth, async (req, res) => {
       const [excAccounts, underReview] = await Promise.all([queryAll('accounts'), queryAll('transactions', t => t.status === 'under_review')]);
       const acct = excAccounts[0];
       if (!acct || !underReview.length) return res.json({ success: true, source: 'system', reply: '✅ No pending exceptions. All under-review transactions are within their cutoff windows.' });
-      const fmtMs = ms => { const h = Math.floor(ms/3600000), m = Math.floor((ms%3600000)/60000); return h > 0 ? h+'h '+m+'m' : m+'m'; };
+      const fmtMs = ms => { const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000); return h > 0 ? h + 'h ' + m + 'm' : m + 'm'; };
       const withDeadline = underReview.map(txn => {
         const created = new Date(txn.created_at);
         const [hh, mm] = (acct.cutoff_time || '14:00').split(':').map(Number);
@@ -446,8 +446,8 @@ router.post('/message', optionalAuth, async (req, res) => {
         return { ...txn, ms_remaining: msLeft, is_past_due: msLeft < 0 };
       });
       const pastDue = withDeadline.filter(e => e.is_past_due);
-      const urgent  = withDeadline.filter(e => !e.is_past_due && e.ms_remaining < 3600000);
-      const safe    = withDeadline.filter(e => !e.is_past_due && e.ms_remaining >= 3600000);
+      const urgent = withDeadline.filter(e => !e.is_past_due && e.ms_remaining < 3600000);
+      const safe = withDeadline.filter(e => !e.is_past_due && e.ms_remaining >= 3600000);
       let reply = '⏰ **Exception Dashboard** — ' + withDeadline.length + ' pending (cutoff: ' + acct.cutoff_time + ', default: ' + acct.default_action + '):\n\n';
       if (pastDue.length) reply += '🔴 **Past Due (' + pastDue.length + '):**\n' + pastDue.map(e => '• **' + e.transaction_id + '** — ' + e.company_name + ' $' + Number(e.amount).toLocaleString() + ' L' + e.risk_level).join('\n') + '\n\n';
       if (urgent.length) reply += '🟡 **Urgent (<1 hr, ' + urgent.length + '):**\n' + urgent.map(e => '• **' + e.transaction_id + '** — ' + e.company_name + ' $' + Number(e.amount).toLocaleString() + ' · ' + fmtMs(e.ms_remaining) + ' left').join('\n') + '\n\n';
@@ -499,8 +499,8 @@ router.post('/message', optionalAuth, async (req, res) => {
     }
 
     // ── Step 3: Build full live context + conversation history ─────────────
-    const liveContext  = await buildLiveContext();
-    const historyStr   = history.slice(-12)
+    const liveContext = await buildLiveContext();
+    const historyStr = history.slice(-12)
       .map(h => (h.role === 'user' ? 'User' : 'Assistant') + ': ' + h.content)
       .join('\n');
 
@@ -595,25 +595,25 @@ router.post('/crud', authenticate, async (req, res) => {
     // CREATE
     if (operation === 'create') {
       const required = ['company_name', 'amount', 'account_number', 'routing_number'];
-      const missing  = required.filter(f => !data[f]);
+      const missing = required.filter(f => !data[f]);
       if (missing.length) return res.status(400).json({ success: false, error: 'Missing: ' + missing.join(', ') });
 
       const txnId = 'TXN-' + uuidv4().slice(0, 8).toUpperCase();
       const txn = {
-        transaction_id:   txnId,
-        company_name:     data.company_name,
-        company_id:       data.company_id || 'ADMIN000',
-        sec_code:         (data.sec_code || 'PPD').toUpperCase(),
+        transaction_id: txnId,
+        company_name: data.company_name,
+        company_id: data.company_id || 'ADMIN000',
+        sec_code: (data.sec_code || 'PPD').toUpperCase(),
         transaction_type: (data.transaction_type || 'debit').toLowerCase(),
-        account_type:     data.account_type || 'checking',
-        amount:           parseFloat(data.amount),
-        account_number:   data.account_number,
-        routing_number:   data.routing_number,
-        rdfi_routing:     data.routing_number,
-        effective_date:   data.effective_date || new Date().toISOString().split('T')[0],
-        entry_description:(data.entry_description || '').slice(0, 10),
-        individual_name:  data.individual_name || '',
-        trace_number:     data.trace_number || '',
+        account_type: data.account_type || 'checking',
+        amount: parseFloat(data.amount),
+        account_number: data.account_number,
+        routing_number: data.routing_number,
+        rdfi_routing: data.routing_number,
+        effective_date: data.effective_date || new Date().toISOString().split('T')[0],
+        entry_description: (data.entry_description || '').slice(0, 10),
+        individual_name: data.individual_name || '',
+        trace_number: data.trace_number || '',
         ofac_screened: false, ofac_result: 'pending', aml_flag: false, prenote: false,
         originator: 'CHATBOT_ADMIN:' + user.username,
       };
@@ -717,10 +717,12 @@ router.post('/manage', authenticate, async (req, res) => {
     if (operation === 'list_users') {
       if (!isAdmin) return res.status(403).json({ success: false, error: 'Admin required' });
       const users = await queryAll('users');
-      return res.json({ success: true, operation, data: users.map(u => ({
-        user_id: u.user_id, username: u.username, full_name: u.full_name,
-        email: u.email, role: u.role, is_active: u.is_active, last_login: u.last_login, created_at: u.created_at
-      }))});
+      return res.json({
+        success: true, operation, data: users.map(u => ({
+          user_id: u.user_id, username: u.username, full_name: u.full_name,
+          email: u.email, role: u.role, is_active: u.is_active, last_login: u.last_login, created_at: u.created_at
+        }))
+      });
     }
 
     // ── Update user role/status (admin) ──────────────────────────────────────
@@ -736,7 +738,7 @@ router.post('/manage', authenticate, async (req, res) => {
       if (!Object.keys(updates).length) return res.status(400).json({ success: false, error: 'No valid fields to update (role, is_active)' });
       await update('users', u => u.user_id === user_id, () => updates);
       await insert('audit_logs', { transaction_id: null, event_type: 'user_updated', event_summary: '[CHATBOT] User ' + target.username + ' updated by ' + user.username + ': ' + JSON.stringify(updates), event_data: updates, actor: user.username, severity: 'info' });
-      return res.json({ success: true, operation, message: 'User **' + target.username + '** updated: ' + Object.entries(updates).map(([k,v]) => k + '=' + v).join(', ') });
+      return res.json({ success: true, operation, message: 'User **' + target.username + '** updated: ' + Object.entries(updates).map(([k, v]) => k + '=' + v).join(', ') });
     }
 
     // ── Delete user (admin) ──────────────────────────────────────────────────
@@ -765,7 +767,7 @@ router.post('/manage', authenticate, async (req, res) => {
         return { transaction_id: txn.transaction_id, company_name: txn.company_name, amount: txn.amount, risk_level: txn.risk_level, risk_score: txn.risk_score, ms_remaining: Math.max(0, msLeft), is_past_due: msLeft < 0, cutoff_time: acct.cutoff_time, default_action: acct.default_action, ai_recommendation: txn.ai_recommendation };
       });
       const pastDue = exceptions.filter(e => e.is_past_due).length;
-      const urgent  = exceptions.filter(e => !e.is_past_due && e.ms_remaining < 3600000).length;
+      const urgent = exceptions.filter(e => !e.is_past_due && e.ms_remaining < 3600000).length;
       return res.json({ success: true, operation, data: exceptions, summary: { total: exceptions.length, past_due: pastDue, urgent, safe: exceptions.length - pastDue - urgent } });
     }
 
@@ -809,7 +811,7 @@ router.post('/manage', authenticate, async (req, res) => {
       if (!isAdmin && !isSupervisor) return res.status(403).json({ success: false, error: 'Admin or supervisor required' });
       const { transaction_id, category, message: mirMsg, originator_email } = data;
       if (!transaction_id) return res.status(400).json({ success: false, error: 'transaction_id required' });
-      const MIR_CATS = ['IDENTITY_VERIFICATION','AUTHORIZATION_PROOF','BUSINESS_PURPOSE_CLARIFICATION','AMOUNT_DISCREPANCY','ACCOUNT_OWNERSHIP','SANCTIONS_REVIEW','DUPLICATE_EXPLANATION','CUSTOM'];
+      const MIR_CATS = ['IDENTITY_VERIFICATION', 'AUTHORIZATION_PROOF', 'BUSINESS_PURPOSE_CLARIFICATION', 'AMOUNT_DISCREPANCY', 'ACCOUNT_OWNERSHIP', 'SANCTIONS_REVIEW', 'DUPLICATE_EXPLANATION', 'CUSTOM'];
       if (!category || !MIR_CATS.includes(category)) return res.status(400).json({ success: false, error: 'category must be one of: ' + MIR_CATS.join(', ') });
       if (!mirMsg || mirMsg.trim().length < 10) return res.status(400).json({ success: false, error: 'message required (min 10 chars)' });
       const txn = await queryOne('transactions', t => t.transaction_id === transaction_id);
@@ -822,7 +824,7 @@ router.post('/manage', authenticate, async (req, res) => {
       const requestId = 'MIR-' + uuidv4MIR().slice(0, 8).toUpperCase();
       const now = new Date();
       const tokenExpiresAt = new Date(now.getTime() + TOKEN_EXPIRY_HOURS * 3600000).toISOString();
-      const slaDeadlineAt  = new Date(now.getTime() + MIR_SLA_HOURS * 3600000).toISOString();
+      const slaDeadlineAt = new Date(now.getTime() + MIR_SLA_HOURS * 3600000).toISOString();
       const existing = await queryAll('info_requests', r => r.transaction_id === transaction_id);
       const roundNumber = existing.length + 1;
       await insert('info_requests', { request_id: requestId, transaction_id, round_number: roundNumber, requested_by: user.full_name, actor_type: 'HUMAN', category, message: mirMsg.trim(), requested_fields: [], portal_token: portalToken, token_expires_at: tokenExpiresAt, sla_deadline_at: slaDeadlineAt, status: 'pending', response_message: null, originator_email: originator_email || txn.originator_email || null });

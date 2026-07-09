@@ -387,11 +387,51 @@ END $$;
 
 ALTER TABLE chat_messages DISABLE ROW LEVEL SECURITY;
 
+-- ── Threshold Config ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS threshold_config (
+  _id         BIGSERIAL PRIMARY KEY,
+  _doc_key    TEXT UNIQUE,
+  data        JSONB NOT NULL DEFAULT '{}',
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_threshold_config_doc_key ON threshold_config(_doc_key);
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_threshold_config_updated_at') THEN
+    CREATE TRIGGER trg_threshold_config_updated_at
+      BEFORE UPDATE ON threshold_config
+      FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+  END IF;
+END $$;
+
+ALTER TABLE threshold_config DISABLE ROW LEVEL SECURITY;
+
+-- ── SEC Code Config ──────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sec_code_config (
+  _id         BIGSERIAL PRIMARY KEY,
+  _doc_key    TEXT UNIQUE,
+  data        JSONB NOT NULL DEFAULT '{}',
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sec_code_config_doc_key ON sec_code_config(_doc_key);
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_sec_code_config_updated_at') THEN
+    CREATE TRIGGER trg_sec_code_config_updated_at
+      BEFORE UPDATE ON sec_code_config
+      FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+  END IF;
+END $$;
+
+ALTER TABLE sec_code_config DISABLE ROW LEVEL SECURITY;
+
 
 -- ============================================================
 -- COMPLETION
 -- ============================================================
 SELECT
   '✅ ACH Triage AI v4.0 — Database setup complete' AS status,
-  16 AS total_tables,
-  'transactions, risk_rules, return_codes, users, audit_logs, human_decisions, review_decisions, learning_patterns, batch_jobs, accounts, acl_filter_rules, check_register, info_requests, transaction_lifecycles, chat_sessions, chat_messages' AS tables;
+  18 AS total_tables,
+  'transactions, risk_rules, return_codes, users, audit_logs, human_decisions, review_decisions, learning_patterns, batch_jobs, accounts, acl_filter_rules, check_register, info_requests, transaction_lifecycles, chat_sessions, chat_messages, threshold_config, sec_code_config' AS tables;

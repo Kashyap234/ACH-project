@@ -35,16 +35,53 @@ async function sendPortalEmail({ to, company_name, amount, request_message, cate
   const expiresStr = new Date(expires_at).toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
   const body = `Hello,\n\nYour ACH transaction requires additional information.\n\nTransaction: ${company_name} — $${Number(amount).toLocaleString('en-US',{minimumFractionDigits:2})}\nCategory: ${catLabel}\n\nWhat we need:\n  ${request_message}\n\nPlease respond at: ${portal_url}\n\nThis link expires on ${expiresStr}.\n\nIMPORTANT: Do not share this link. If you did not initiate this transaction, contact your bank immediately.`;
   const key = process.env.RESEND_API_KEY;
+  let emailSent = false;
+  
   if (key) {
     try {
       const { Resend } = require('resend');
       const { data, error } = await new Resend(key).emails.send({ from: process.env.RESEND_FROM || 'onboarding@resend.dev', to, subject: 'Action Required: Additional Information Needed for ACH Transaction', text: body });
-      if (error) throw new Error(error.message);
-      return { sent: true, id: data?.id };
-    } catch (e) { return { sent: false, error: e.message }; }
+      if (error) {
+        console.warn('[MIR] ⚠️  Resend email send failed:', error.message, '— Falling back to SMTP (Nodemailer)');
+      } else {
+        emailSent = true;
+        return { sent: true, id: data?.id };
+      }
+    } catch (e) {
+      console.warn('[MIR] ⚠️  Resend email send failed:', e.message, '— Falling back to SMTP (Nodemailer)');
+    }
   }
+
+  if (!emailSent && process.env.SMTP_HOST) {
+    try {
+      const nodemailer = require('nodemailer');
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: parseInt(process.env.SMTP_PORT || '587'),
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      });
+
+      const info = await transporter.sendMail({
+        from: `"${process.env.SMTP_FROM || 'ACH Triage'}" <${process.env.SMTP_USER}>`,
+        to: to,
+        subject: 'Action Required: Additional Information Needed for ACH Transaction',
+        text: body,
+      });
+
+      console.log(`[MIR] ✅ Portal link emailed via Nodemailer to: ${to} MessageId: ${info.messageId}`);
+      emailSent = true;
+      return { sent: true, id: info.messageId };
+    } catch (e) {
+      console.warn('[MIR] ⚠️  Nodemailer email send failed:', e.message);
+    }
+  }
+
   console.log(`\n╔══ MIR PORTAL LINK ══╗\n  To  : ${to||'(no email)'}\n  Link: ${portal_url}\n  Exp : ${expiresStr}\n╚═════════════════════╝\n`);
-  return { sent: false, reason: 'RESEND_API_KEY not configured — link logged above' };
+  return { sent: false, reason: 'Both Resend and SMTP failed — link logged above' };
 }
 
 async function _createInfoRequest({ txn, roundNumber, category, message, actorType, actorName, originatorEmail, patternHash }) {
